@@ -280,6 +280,49 @@ Kubernetes Operator概念是由CoreOS的工程师于2016年提出的，它是在
 
 ## 网络
 
+### Linux网络
+
+#### 命名空间
+
+支持网络协议多个实例。Linux引入Linux网络命名空间概念，独立的协议栈隔离在命名空间中、其中包含有 路由表、iptables、nat、套接字（必属于一个命名空间、操作也需在命名空间中进行）虚拟网络设备（物理网络设备 只能关联到root命名空间）等。
+
+命令空间是独立的网络协议栈，相互之间隔离无法进行通信，但通过建立Veth对就可以在两个命名空间进行通信。
+
+#### Veth设备对
+
+引入Veth设备对是为了不同的命名空间之间通信，成对出现可看成一对网卡。Veth设备对一端发送数据可直接发送到另一端。
+
+```
+#建立Veth设备对
+ip link add veth0 type veth peer name veth1
+
+#查看
+ip link show
+
+#将一端甩给另一个namespace
+ip link set veth1 netns netns1
+
+#设置ip地址才可以通信
+ip netns exec netns1 ip addr add 10.1.1.1/24 dev veth1
+ip addr add 10.1.1.2/24 dev veth0 
+```
+
+#### 网桥
+
+通过网桥把若干个网络接口连接起来，让网络接口之间的报文能够相互转发。网桥是一个二层虚拟网络设备（MAC地址学习），Linux内核通过一个虚拟的网桥设备（Net Device）来进行桥接的。
+
+```
+# 新增一个网桥设备
+brctl addbr xxxx
+ 
+# 给网桥配置ip地址
+ifconfig brxxx 127.1.1.1
+```
+
+
+
+
+
 ### 网络模型
 
 基本原则：每个pod都有一个独立的ip地址，并处于一个扁平的网络空间中，相互可以直接连通。
@@ -305,8 +348,6 @@ Docker动态端口映射导致访问者看到的IP与PORT与服务提供者实�
   ![image-20210806103339469](Kubernetes.assets/image-20210806103339469.png)
 
 + 1
-
-
 
 
 
