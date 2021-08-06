@@ -4,13 +4,13 @@
 
 通过docker client 连接 dockerd ,使用restful接口 ，（client 与 dockerd 可不在同一台机器上）
 
-![1576412720164](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576412720164.png)
+![1576412720164](Docker  .assets\1576412720164.png)
 
 
 
 #### Docker Engine - CS结构
 
-![1576412471222](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576412471222.png)
+![1576412471222](Docker  .assets\1576412471222.png)
 
 
 
@@ -18,13 +18,13 @@
 
 
 
-![1576415268592](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576415268592.png)
+![1576415268592](Docker  .assets\1576415268592.png)
 
 #### Docker container
 
 
 
-![1576417202174](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576417202174.png)
+![1576417202174](Docker  .assets\1576417202174.png)
 
 
 
@@ -34,37 +34,37 @@
 
 base image, 使用官方image做base image, [也**可引用 本地已有的 images**]
 
-![1576503149349](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576503149349.png)
+![1576503149349](Docker  .assets\1576503149349.png)
 
 **2、LABEL** 
 
 注释  descs
 
-![1576503427380](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576503427380.png)
+![1576503427380](Docker  .assets\1576503427380.png)
 
 **3、RUN**
 
 命令行执行命令。避免无用分层，建议合并多条命令为一行。且使用反斜线为换行符，提高可读性
 
-![1576503689672](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576503689672.png)
+![1576503689672](Docker  .assets\1576503689672.png)
 
 **4、WORKDIR**
 
 设定当前工作目录。替换 RUN cd ，尽量使用绝对目录
 
-![1576503823292](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576503823292.png)
+![1576503823292](Docker  .assets\1576503823292.png)
 
 **5、ADD and COPY**
 
 添加当前系统文件/目录到 image 指定目录 ，ADD 可自动解压缩。添加远程文件/目录 使用 RUN curl 或 wget
 
-![1576504159420](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576504159420.png)
+![1576504159420](Docker  .assets\1576504159420.png)
 
 **6、ENV**
 
 设置常量
 
-![1576504823751](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1576504823751.png)
+![1576504823751](Docker  .assets\1576504823751.png)
 
 **7、RUN**
 
@@ -95,11 +95,11 @@ CMD []
 
 
 
-![1577626027211](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1577626027211.png)
+![1577626027211](Docker  .assets\1577626027211.png)
 
 
 
-![1577716700305](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\1577716700305.png)
+![1577716700305](Docker  .assets\1577716700305.png)
 
 
 
