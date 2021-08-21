@@ -282,6 +282,41 @@ Kubernetes Operator概念是由CoreOS的工程师于2016年提出的，它是在
 
 ### Linux网络
 
+#### IP-CIDR
+
+##### ipv4
+
+IPV4的地址是一个32位的二进制数，由网络ID和主机ID两部分组成，用来在网络中唯一的标识一台计算机。IP地址通常用四组3位的十进制数表示，中间用**.**分割，例如:**192.168.0.1**。
+
+**ip 分类**
+
++ A : A类地址用IP地址前8位表示网络ID，用IP地址后24位表示主机ID。[0,127].xxx.xxx.xxx.xxx
+
++ B:  B类地址用IP地址前16位表示网络ID，用IP地址后16位表示主机ID。[128,191].xxx.xxx.xxx
+
++ C: C类地址用IP地址前24位表示网络ID，用IP地址后8位表示主机ID。[192－223].xxx.xxx.xxx 
+
++ D: D类地址用来多播使用，没有网络ID和主机ID之分
++ E: E类地址保留实验用，没有网络ID和主机ID之分
+
+**网络ID、主机ID和子网掩码**
+
+当为一台计算机分配IP地址后，该计算机的IP地址哪部份表示网络ID，哪部份表示主机ID，并不由IP地址所属的类来确定，而是由子网掩码确定。子网确定一个IP地址属于哪一个子网。子网掩码的格式是以连续的255后面跟连续的0表示，其中连续的255这部份表示网络ID；连续0部份表示主机ID。比如，子网掩码255.255.0.0和255.255.255.0。
+
+**CIDR(无类域间路由)**
+
+将子网掩码转换为二进制，就会发现网络ID部分全部是1、主机ID部分全部是0。
+
+CIDR（Classless Inter-Domain Routing，无类域间路由选择）它消除了传统的A类、B类和C类地址以及划分子网的概念，因而可以更加有效地分配IPv4的地址空间。它可以将好几个IP网络结合在一起，使用一种无类别的域际路由选择算法，使它们合并成一条路由从而较少路由表中的路由条目减轻Internet路由器的负担。
+
+CIDR技术用子网掩码中连续的1部份表示网络ID，连续的0部份表示主机ID。比如，网络中包含2000台计算机，只需要用11位表示 主机ID，用21位表网络ID，则子网掩码表示为11111111.11111111.11100000.00000000，转换为十进制则为 255.255.224.0。此时，该网络将包含2046台计算机，既不会造成IP地址的浪费，也不会利用路由器连接网络，增加额外的管理维护量。
+
+CIDR表示方法：IP地址/网络ID的位数，比如192.168.23.35/21，其中用21位表示网络ID。
+
+
+
+
+
 #### 命名空间
 
 支持网络协议多个实例。Linux引入Linux网络命名空间概念，独立的协议栈隔离在命名空间中、其中包含有 路由表、iptables、nat、套接字（必属于一个命名空间、操作也需在命名空间中进行）虚拟网络设备（物理网络设备 只能关联到root命名空间）等。
@@ -339,6 +374,8 @@ Docker动态端口映射导致访问者看到的IP与PORT与服务提供者实�
 
   ![image-20210806103007723](Kubernetes.assets/image-20210806103007723.png)
 
+  同一个pod内容器共享一个网络空间（同一个linux协议栈）、可通过localhost访问
+
 + 所有节点可以不用NAT方式和所用容器通信
 
   ![image-20210806103126178](Kubernetes.assets/image-20210806103126178.png)
@@ -348,6 +385,271 @@ Docker动态端口映射导致访问者看到的IP与PORT与服务提供者实�
   ![image-20210806103339469](Kubernetes.assets/image-20210806103339469.png)
 
 + 1
+
+整个Kubernetes 集群中对pod的IP进行分配，不能有冲突（每个node上的docker0 网络段都不一致）
+
+将pod ip和node ip 关联起来、通过CNI网络插件制定路由表
+
+
+
+### Network Policy
+
+#### 功能
+
+对Pod间的网络通信进行限制和准入控制，设置方式为将pod的label作为查询条件，设置允许访问或禁止访问的客户端pod列表。
+
+**级别 pod、namespace**。
+
+#### 设置实现
+
+通过 kubernetes **资源对象 NetworkPolicy** 与 **策略控制器（Policy Controller）**进行策略实现。策略控制器可通过第三方插件提供如（Calico）。
+
+集群使用CNI - Calico
+
+#### 实验案例
+
+**设置namespace下指定 pod 的访问策略Ingress**
+
++ 同namespace 下的指定pod可访问
+
+```
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: f5-test-nginx-port2-netpolicy
+  namespace: test-czw
+spec:
+  podSelector:
+    matchLabels:
+      app-netpolicy: f5-test-nginx-port2-pod #选中执行策略的pod
+  policyTypes:
+  - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app-netpolicy: f5-test-tomcat-port1-pod  #同namespace 下的指定pod可访问
+```
+
++ 同namespace 下的指定pod可访问 访问指定端口 8080
+
+```
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: f5-test-nginx-port2-netpolicy
+  namespace: test-czw
+spec:
+  podSelector:
+    matchLabels:
+      app-netpolicy: f5-test-nginx-port2-pod
+  policyTypes:
+  - Ingress
+  ingress:
+    - ports:
+        - port: 8080 #指定端口
+      from: # 注意在 一个 ports 和 from 在一个 - 下
+        - podSelector:
+            matchLabels:
+              app-netpolicy: f5-test-tomcat-port1-pod
+              
+---  
+# 或，ports 和 from 在一个 - 下
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: f5-test-nginx-port2-netpolicy
+  namespace: test-czw
+spec:
+  podSelector:
+    matchLabels:
+      app-netpolicy: f5-test-nginx-port2-pod
+  policyTypes:
+  - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app-netpolicy: f5-test-tomcat-port1-pod
+      ports:
+        - port: 8080
+          protocol: TCP
+```
+
+
+
++ 指定其他的namespace访问指定pod 
+
+```
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: f5-test-nginx-port2-netpolicy
+  namespace: test-czw
+spec:
+  podSelector:
+    matchLabels:
+      app-netpolicy: f5-test-nginx-port2-pod
+  policyTypes:
+  - Ingress
+  ingress:
+    - from:
+        - podSelector:  # 同一namespace 下的其他pod
+            matchLabels:
+              app-netpolicy: f5-test-tomcat-port1-pod
+        - namespaceSelector: # 有指定标签的namespace 下的所有pod可访问
+            matchLabels:
+              app-netpolicy: f5-test-nginx-port2-pod
+      ports:
+        - port: 8080
+          protocol: TCP
+          
+---
+# 指定namespace 下的 指定pod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: f5-test-nginx-port2-netpolicy
+  namespace: test-czw
+spec:
+  podSelector:
+    matchLabels:
+      app-netpolicy: f5-test-nginx-port2-pod
+  policyTypes:
+  - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app-netpolicy: f5-test-tomcat-port1-pod
+        - namespaceSelector:
+            matchLabels:
+              app-netpolicy: f5-test-nginx-port2-pod
+          podSelector:
+            matchLabels:
+              app-netpolicy: f5-test-nginx-port2-pod
+      ports:
+        - port: 8080
+          protocol: TCP
+
+
+```
+
++ 命名空间自身隔离、与其他命名空间关联
+
+```
+# 本命名空间隔离
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: test-czw-myself
+  namespace: test-czw
+spec:
+  podSelector: {}
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app-netpolicy: test-czw
+
+
+---
+# 命名空间间关联
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: test-czw-and-othhers
+  namespace: test-czw
+spec:
+  podSelector: {}
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: app-netpolicy
+                operator: In
+                values:
+                  - test-czw
+                  - f5-test-nginx-port2-pod
+```
+
++ 111
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Kubectl 命令
+
++ 给pod 添加label
+
+  ```
+  #添加
+  kubectl label pod f5-test-nginx-port2-cf5fc5989-lrqkc app-netpolicy=f5-test-nginx-port2-pod -n test-czw
+  #修改
+  kubectl label pod f5-test-nginx-port2-cf5fc5989-lrqkc app-netpolicy=f5-test-nginx-port2-pod-update -n test-czw -- overwrite
+  #删除
+  kubectl label pod f5-test-nginx-port2-cf5fc5989-lrqkc app-netpolicy- -n test-czw
+  ```
+
+  
+
++ 进入pod
+
+  ```
+  kubectl exec -it f5-test-tomcat-port1-568c67d9fb-f5sr9 -n test-czw -- /bin/bash
+  ```
+
+  
+
++ 批量删除pod
+
+  ```
+  #筛选 命名空间下 状态 Completed
+  kubectl get pods -n databench-ns | grep Completed | awk '{print $1}'
+  
+  #批量删除
+  kubectl get pods -n databench-ns | grep Completed | awk '{print $1}' | xargs kubectl delete pod
+  
+  ```
+
+  
+
++ 11
+
++ 11
+
++ 11
+
++ 11
+
++ 11
+
++ 11
+
++ 11
+
+
+
+
 
 
 
