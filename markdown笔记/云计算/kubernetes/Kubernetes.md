@@ -583,17 +583,149 @@ spec:
 
 ## 配置
 
+### ConfigMap
+
+使用congfimap 将配置文件外置到镜像外部，即配置分离。
+
+ConfigMap 使用 `data` 和 `binaryData` 字段。这些字段能够接收键-值对作为其取值。`data` 和 `binaryData` 字段都是可选的。`data` 字段设计用来保存 UTF-8 字节序列，而 `binaryData` 则 被设计用来保存二进制数据作为 base64 编码的字串。
+
+**在 Pod 中将 ConfigMap 当做文件使用**
+
+1. 创建一个 ConfigMap 对象或者使用现有的 ConfigMap 对象。多个 Pod 可以引用同一个 ConfigMap。
+2. 修改 Pod 定义，在 `spec.volumes[]` 下添加一个卷。 为该卷设置任意名称，之后将 `spec.volumes[].configMap.name` 字段设置为对 你的 ConfigMap 对象的引用。
+3. 为每个需要该 ConfigMap 的容器添加一个 `.spec.containers[].volumeMounts[]`。 设置 `.spec.containers[].volumeMounts[].readOnly=true` 并将 `.spec.containers[].volumeMounts[].mountPath` 设置为一个未使用的目录名， ConfigMap 的内容将出现在该目录中。
+4. 更改你的镜像或者命令行，以便程序能够从该目录中查找文件。ConfigMap 中的每个 `data` 键会变成 `mountPath` 下面的一个文件名。
 
 
 
 
 
+### Secret
+
+#### 概述
+
+`Secret` 对象类型用来保存敏感信息，例如密码、OAuth 令牌和 SSH 密钥。Kubernetes Secret 默认情况下存储为 base64-编码的、非加密的字符串。可采取如下策略：
+
++ 为 Secret [启用静态加密](https://kubernetes.io/zh/docs/tasks/administer-cluster/encrypt-data/)；
++ [启用 或配置 RBAC 规则](https://kubernetes.io/zh/docs/reference/access-authn-authz/authorization/)来限制对 Secret 的读写操作。 要注意，任何被允许创建 Pod 的人都默认地具有读取 Secret 的权限。
+
+Kubernetes 提供若干种内置的类型，用于一些常见的使用场景。 针对这些类型，Kubernetes 所执行的合法性检查操作以及对其所实施的限制各不相同。
+
+| 内置类型                              | 用法                                     |
+| ------------------------------------- | ---------------------------------------- |
+| `Opaque`                              | 用户定义的任意数据                       |
+| `kubernetes.io/service-account-token` | 服务账号令牌                             |
+| `kubernetes.io/dockercfg`             | `~/.dockercfg` 文件的序列化形式          |
+| `kubernetes.io/dockerconfigjson`      | `~/.docker/config.json` 文件的序列化形式 |
+| `kubernetes.io/basic-auth`            | 用于基本身份认证的凭据                   |
+| `kubernetes.io/ssh-auth`              | 用于 SSH 身份认证的凭据                  |
+| `kubernetes.io/tls`                   | 用于 TLS 客户端或者服务器端的数据        |
+| `bootstrap.kubernetes.io/token`       | 启动引导令牌数据                         |
+
+通过为 Secret 对象的 `type` 字段设置一个非空的字符串值，你也可以定义并使用自己 Secret 类型。如果 `type` 值为空字符串，则被视为 `Opaque` 类型。 Kubernetes 并不对类型的名称作任何限制。不过，如果你要使用内置类型之一， 则你必须满足为该类型所定义的所有要求。
+
+#### 使用Secret
+
+Secret 可以作为数据卷被挂载，或作为[环境变量](https://kubernetes.io/zh/docs/concepts/containers/container-environment/) 暴露出来以供 Pod 中的容器使用。它们也可以被系统的其他部分使用，而不直接暴露在 Pod 内。 例如，它们可以保存凭据，系统的其他部分将用它来代表你与外部系统进行交互。
+
++ Pod中使用Secret文件
+
+```
+# 将Secret中每一个键值映射成指定目录下的独立文件
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod
+spec:
+  containers:
+  - name: mypod
+    image: redis
+    volumeMounts:
+    - name: foo
+      mountPath: "/etc/foo"
+      readOnly: true
+  volumes:
+  - name: foo
+    secret:
+      secretName: mysecret
+```
+
++ 将 Secret 键名映射到特定路径
+
+  如果使用了 `spec.volumes[].secret.items`，只有在 `items` 中指定的键会被映射。 要使用 Secret 中所有键，就必须将它们都列在 `items` 字段中。 所有列出的键名必须存在于相应的 Secret 中。否则，不会创建卷。
+
+```
+# username Secret 存储在 /etc/foo/my-group/my-username 文件中而不是 /etc/foo/username 中。
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod
+spec:
+  containers:
+  - name: mypod
+    image: redis
+    volumeMounts:
+    - name: foo
+      mountPath: "/etc/foo"
+      readOnly: true
+  volumes:
+  - name: foo
+    secret:
+      secretName: mysecret
+      items:
+      - key: username
+        path: my-group/my-username
+        mode: 511 # linux 文件权限777
+```
+
+**已卷挂载形式的Secret会自动更新**，当已经存储于卷中被使用的 Secret 被更新时，被映射的键也将终将被更新。 组件 kubelet 在周期性同步时检查被挂载的 Secret 是不是最新的。 但是，它会使用其本地缓存的数值作为 Secret 的当前值。
 
 
 
+**以环境变量的形式使用 Secrets**
 
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secret-env-pod
+spec:
+  containers:
+  - name: mycontainer
+    image: redis
+    env:
+      - name: SECRET_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: mysecret
+            key: username
+      - name: SECRET_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: mysecret
+            key: password
+  restartPolicy: Never
+```
 
+如果某个容器已经在通过环境变量使用某 Secret，对该 Secret 的更新不会被 容器马上看见，除非容器被重启。
 
+imagePullSecret
+
+```
+# 拉取镜像Secret
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  creationTimestamp: 2015-08-07T22:02:39Z
+  name: default
+  namespace: default
+  uid: 052fb0f4-3d50-11e5-b066-42010af0d7b6
+secrets:
+- name: default-token-uudge
+imagePullSecrets:
+- name: myregistrykey
+```
 
 
 
@@ -633,18 +765,17 @@ spec:
 
   
 
-+ 11
++ 查看pod日志
+
+```
+kubectl logs -f bobft-cce-api-server-6d66d9464-bnrcj -c bobft-cce-api-server -n cce-system
+```
 
 + 11
-
 + 11
-
 + 11
-
 + 11
-
 + 11
-
 + 11
 
 
