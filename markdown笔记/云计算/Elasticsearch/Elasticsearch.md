@@ -88,6 +88,68 @@ curl -X DELETE "localhost:9200/website/blog/123?pretty"
 
 即使文档不存在（ `Found` 是 `false` ）， `_version` 值仍然会增加。这是 Elasticsearch 内部记录本的一部分，用来确保这些改变在跨多节点时以正确的顺序执行。
 
+#### update
+
+文档是不可变的：他们不能被修改，只能被替换。 `update` API 必须遵循同样的规则。 从外部来看，我们在一个文档的某个位置进行部分更新。然而在内部， `update` API 简单使用与之前描述相同的 *检索-修改-重建索引* 的处理过程。
+
++ 增加新字段到文档中（doc）
+
+  ```
+  # 增加字段 tags 和 views , 合并到原 Id=1 中
+  curl -X POST "localhost:9200/website/blog/1/_update?pretty" -H 'Content-Type: application/json' -d'
+  {
+     "doc" : {
+        "tags" : [ "testing" ],
+        "views": 0
+     }
+  }
+  '
+  ```
+
++ 使用脚本更新文档
+
+  ```
+  # Groovy 脚本
+  curl -X POST "localhost:9200/website/blog/1/_update?pretty" -H 'Content-Type: application/json' -d'
+  {
+     "script" : "ctx._source.views+=1"
+  }
+  '
+  
+  ---
+  curl -X POST "localhost:9200/website/blog/1/_update?pretty" -H 'Content-Type: application/json' -d'
+  {
+     "script" : "ctx._source.tags+=new_tag",
+     "params" : {
+        "new_tag" : "search"
+     }
+  }
+  '
+  ```
+
++ 更新冲突重试
+
+  为了避免数据丢失， `update` API 在 *检索* 步骤时检索得到文档当前的 `_version` 号，并传递版本号到 *重建索引* 步骤的 `index` 请求。 如果另一个进程修改了处于检索和重新索引步骤之间的文档，那么 `_version` 号将不匹配，更新请求将会失败。
+
+  这可以通过设置参数 `retry_on_conflict` 来自动完成， 这个参数规定了失败之前 `update` 应该重试的次数，它的默认值为 `0` 。
+
+  ```
+  curl -X POST "localhost:9200/website/pageviews/1/_update?retry_on_conflict=5&pretty" -H 'Content-Type: application/json' -d'
+  {
+     "script" : "ctx._source.views+=1",
+     "upsert": {
+         "views": 0
+     }
+  }
+  '
+  ```
+
++ 33
+
++ 44
+
+
+
 #### query
 
 ##### 轻量搜索
@@ -442,6 +504,154 @@ curl -X GET "localhost:9200/megacorp/employee/_search?pretty" -H 'Content-Type: 
   }
 ```
 
+##### 多索引搜索
+
++ 搜索多个索引中文档
+
+`mget` API 要求有一个 `docs` 数组作为参数，每个元素包含需要检索文档的元数据， 包括 `_index` 、 `_type` 和 `_id` 。如果你想检索一个或者多个特定的字段，那么你可以通过 `_source` 参数来指定这些字段的名字：
+
+```
+curl -X GET "localhost:9200/_mget?pretty" -H 'Content-Type: application/json' -d'
+{
+   "docs" : [
+      {
+         "_index" : "website",
+         "_type" :  "blog",
+         "_id" :    2
+      },
+      {
+         "_index" : "website",
+         "_type" :  "pageviews",
+         "_id" :    1,
+         "_source": "views"
+      }
+   ]
+}
+'
+--- 响应
+{
+   "docs" : [
+      {
+         "_index" :   "website",
+         "_id" :      "2",
+         "_type" :    "blog",
+         "found" :    true,
+         "_source" : {
+            "text" :  "This is a piece of cake...",
+            "title" : "My first external blog entry"
+         },
+         "_version" : 10
+      },
+      {
+         "_index" :   "website",
+         "_id" :      "1",
+         "_type" :    "pageviews",
+         "found" :    true,
+         "_version" : 2,
+         "_source" : {
+            "views" : 2
+         }
+      }
+   ]
+}
+```
+
++ 同index、同type 
+
+文档的 `_index` 和 `_type` 都是相同的，你可以只传一个 `ids` 数组，而不是整个 `docs` 数组：
+
+```
+GET /website/blog/_mget
+{
+   "ids" : [ "2", "1" ]
+}
+
+---
+{
+  "docs" : [
+    {
+      "_index" :   "website",
+      "_type" :    "blog",
+      "_id" :      "2",
+      "_version" : 10,
+      "found" :    true,
+      "_source" : {
+        "title":   "My first external blog entry",
+        "text":    "This is a piece of cake..."
+      }
+    },
+    {
+      "_index" :   "website",
+      "_type" :    "blog",
+      "_id" :      "1",
+      "found" :    false  # id 1 的数据不存在
+    }
+  ]
+}
+```
+
+#### 批量操作
+
+ `bulk` API 允许在单个步骤中进行多次 `create` 、 `index` 、 `update` 或 `delete` 请求。 如果你需要索引一个数据流比如日志事件，它可以排队和索引数百或数千批次。
+
+请求格式如下
+
+```
+{ action: { metadata }}\n
+{ request body        }\n
+{ action: { metadata }}\n
+{ request body        }\n
+...
+```
+
+这种格式类似一个有效的单行 JSON 文档 *流* ，它通过换行符(`\n`)连接到一起。注意两个要点：
+
+- 每行一定要以换行符(`\n`)结尾， *包括最后一行* 。这些换行符被用作一个标记，可以有效分隔行。
+- 这些行不能包含未转义的换行符，因为他们将会对解析造成干扰。这意味着这个 JSON *不* 能使用 pretty 参数打印。
+
+`action/metadata` 行指定 *哪一个文档* 做 *什么操作* 。
+
+action 必须为以下选项中
+
++ create
+
+  如果文档不存在，那么就创建它。
+
++ index
+
+  创建一个新文档或者替换一个现有的文档。
+
++ update
+
+  部分更新一个文档。
+
++ delete
+
+  删除一个文档。
+
++ 1
+
+`metadata` 应该指定被索引、创建、更新或者删除的文档的 `_index` 、 `_type` 和 `_id` 。
+
+`request body` 行由文档的 `_source` 本身组成—文档包含的字段和值。它是 `index` 和 `create` 操作所必需的，这是有道理的：你必须提供文档以索引。
+
+```
+curl -X POST "localhost:9200/_bulk?pretty" -H 'Content-Type: application/json' -d'
+{ "delete": { "_index": "website", "_type": "blog", "_id": "123" }} 
+{ "create": { "_index": "website", "_type": "blog", "_id": "123" }}
+{ "title":    "My first blog post" }
+{ "index":  { "_index": "website", "_type": "blog" }}
+{ "title":    "My second blog post" }
+{ "update": { "_index": "website", "_type": "blog", "_id": "123", "_retry_on_conflict" : 3} }
+{ "doc" : {"title" : "My updated blog post"} }
+'
+
+```
+
+**注：谨记最后一个换行符不要落下。**
+
+每个子请求都是独立执行，因此某个子请求的失败不会对其他子请求的成功与否造成影响。 如果其中任何子请求失败，最顶层的 `error` 标志被设置为 `true` ，并且在相应的请求报告出错误明细。**非事务性**
+
 
 
 ### 并发
@@ -606,3 +816,70 @@ curl -X POST "localhost:9200/website/blog/?pretty" -H 'Content-Type: application
 '
 ```
 
+### 分布式存储
+
+#### 路由一个文档到分片中
+
+```
+shard = hash(routing) % number_of_primary_shards
+```
+
+`routing` 是一个可变值，默认是文档的 `_id` ，也可以设置成一个自定义的值。 `routing` 通过 hash 函数生成一个数字，然后这个数字再除以 `number_of_primary_shards` （主分片的数量 **确定好不能改变**）后得到 **余数** 。这个分布在 `0` 到 `number_of_primary_shards-1` 之间的余数，就是我们所寻求的文档所在分片的位置。
+
+所有的文档 API（ `get` 、 `index` 、 `delete` 、 `bulk` 、 `update` 以及 `mget` ）都接受一个叫做 `routing` 的路由参数 ，通过这个参数我们可以自定义文档到分片的映射。一个自定义的路由参数可以用来确保所有相关的文档——例如所有属于同一个用户的文档——都被存储到同一个分片中。
+
+
+
+新建、索引和删除 请求都是 *写* 操作， 必须在主分片上面完成之后才能被复制到相关的副本分片
+
+![](Elasticsearch.assets/elas_0402.png)
+
+以下是在主副分片和任何副本分片上面 成功新建，索引和删除文档所需要的步骤顺序：
+
+1. 客户端向 `Node 1` 发送新建、索引或者删除请求。
+2. 节点使用文档的 `_id` 确定文档属于分片 0 。请求会被转发到 `Node 3`，因为分片 0 的主分片目前被分配在 `Node 3` 上。
+3. `Node 3` 在主分片上面执行请求。如果成功了，它将请求并行转发到 `Node 1` 和 `Node 2` 的副本分片上。一旦所有的副本分片都报告成功, `Node 3` 将向协调节点报告成功，协调节点向客户端报告成功。
+
+在客户端收到成功响应时，文档变更已经在主分片和所有副本分片执行完成，变更是安全的。
+
+#### 取回一个文档
+
+![](Elasticsearch.assets/elas_0403.png)
+
+以下是从主分片或者副本分片检索文档的步骤顺序：
+
+1、客户端向 `Node 1` 发送获取请求。
+
+2、节点使用文档的 `_id` 来确定文档属于分片 `0` 。分片 `0` 的副本分片存在于所有的三个节点上。 在这种情况下，它将请求转发到 `Node 2` 。
+
+3、`Node 2` 将文档返回给 `Node 1` ，然后将文档返回给客户端。
+
+在处理读取请求时，协调结点在每次请求的时候都会通过轮询所有的副本分片来达到负载均衡。
+
+在文档被检索时，**已经被索引的文档可能已经存在于主分片上但是还没有复制到副本分片。 在这种情况下，副本分片可能会报告文档不存在**，但是主分片可能成功返回文档。 一旦索引请求成功返回给用户，文档在主分片和副本分片都是可用的。
+
+
+
+## 系统配置
+
++ **consistency**
+
+  consistency，即一致性。在默认设置下，即使仅仅是在试图执行一个_写_操作之前，主分片都会要求 必须要有 *规定数量(quorum)*（或者换种说法，也即必须要有大多数）的分片副本处于活跃可用状态，才会去执行_写_操作(其中分片副本可以是主分片或者副本分片)。这是为了避免在发生网络分区故障（network partition）的时候进行_写_操作，进而导致数据不一致。_规定数量_即：
+
+  ```
+  int( (primary + number_of_replicas) / 2 ) + 1
+  ```
+
+  `consistency` 参数的值可以设为 `one` （只要主分片状态 ok 就允许执行_写_操作）,`all`（必须要主分片和所有副本分片的状态没问题才允许执行_写_操作）, 或 `quorum` 。默认值为 `quorum` , 即大多数的分片副本状态没问题就允许执行_写_操作。
+
+  处于活跃状态的分片副本数量达不到规定数量，将无法索引和删除任何文档。
+
+  **注：只有当 `number_of_replicas` 大于1的时候，规定数量才会执行。单节点的情况**
+
++ **timeout**
+
+  如果没有足够的副本分片会发生什么？ Elasticsearch会等待，希望更多的分片出现。默认情况下，它最多等待1分钟。 如果你需要，你可以使用 `timeout` 参数 使它更早终止： `100` 100毫秒，`30s` 是30秒。
+
++ 3
+
++ 4
