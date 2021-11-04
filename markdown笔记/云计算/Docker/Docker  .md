@@ -137,9 +137,50 @@ CMD []
 
 
 
+#### 镜像命令
+
++ build
+
+```
+docker build -t 172.16.5.172/bobft/bobft-cce-web-server:V2.0-R0903-202109171653 .
+```
+
++ 登录
+
+```
+docker login 172.16.5.172
+```
+
++ push
+
+```
+docker push 172.16.5.172/bobft/bobft-cce-api-server:V2.0-R0903-202109171653
+```
+
++ 压缩
+
+```
+docker save 172.16.5.172/bobft/bobft-cce-openapi-server:V1.0.0-202109231212 | gzip > bobft-cce-openapi-server_V1.0.0-202109231212.tar.gz
+```
 
 
 
+maven 路由
+
+```
+解决方案
+一、在虚机上添加到172.17.3.0/24段的路由
+route add -net 172.17.3.0 netmask 255.255.255.0 gw 172.16.5.254 dev ens192
+ 
+设置开机自动添加路由
+编辑/etc/rc.local，
+vim /etc/rc.local
+添加
+route add -net 172.17.3.0 netmask 255.255.255.0 gw 172.16.5.254 dev ens192
+ 
+保存退出:wq
+chmod +x /etc/rc.local
+```
 
 
 

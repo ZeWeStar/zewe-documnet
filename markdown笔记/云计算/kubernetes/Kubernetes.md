@@ -226,6 +226,25 @@ Deployment对象，顾名思义，是用于部署应用的对象。它使Kuberne
 
 
 
+## 容器
+
+### 私有仓库镜像引入 pod
+
+- 配置节点向私有仓库进行身份验证
+  - 所有 Pod 均可读取任何已配置的私有仓库
+  - 需要集群管理员配置节点
+- 预拉镜像
+  - 所有 Pod 都可以使用节点上缓存的所有镜像
+  - 需要所有节点的 root 访问权限才能进行设置
+- 在 Pod 中设置 ImagePullSecrets
+  - 只有提供自己密钥的 Pod 才能访问私有仓库
+
+
+
+
+
+
+
 ## Kubernetes Operators
 
 ### 基础概念
@@ -761,18 +780,91 @@ imagePullSecrets:
   #批量删除
   kubectl get pods -n databench-ns | grep Completed | awk '{print $1}' | xargs kubectl delete pod
   
+  #强制批量删除
+  kubectl get pods -n cce-system | grep Terminating | grep bobft-cce-web-server-nginx | awk '{print $1}' | xargs kubectl delete pod --grace-period=0 --force
+  
+  kubectl get pods -n cce-system | grep bobft-cce-web-server-nginx-68f8bbfd64 | awk '{print $1}' | xargs kubectl delete pod -n cce-system --force --grace-period=0
+  
+  kubectl get pods -n tekton-pipelines | grep Termina | awk '{print $1}' | xargs kubectl delete pods -n tekton-pipelines --grace-period=0 --force
+  ```
+
++ 强制删除pod
+
+  ```
+  kubectl delete pod bobft-cce-web-server-nginx-68f8bbfd64-zzv7m -n cce-system --grace-period=0 --force
+  ```
+
+  
+
++ 查看异常pod数量
+
+  ```
+  kubectl get pods -n tekton-pipelines | grep Terminating | grep tekton-pipelines-webhook | wc -l 
+  ```
+
+  
+
++ 查看 notReady node的 kubelet
+
+  ```
+  systemctl status kubelet
+  systemctl restart kubelet
+  ```
+
+  
+
++ 查询etcd
+
+```
+systemctl status etcd -l
+```
+
++ 查询kube-apiserver
+
+  ```
+  systemctl status kube-apiserver
+  ```
+
++ 查看node
+
+  ```
+  kubectl get node
   ```
 
   
 
 + 查看pod日志
 
++ 
+
 ```
 kubectl logs -f bobft-cce-api-server-6d66d9464-bnrcj -c bobft-cce-api-server -n cce-system
 ```
 
-+ 11
-+ 11
++ 直接操作Etcd
+
+  ```
+  export ETCDCTL_API=3 && etcdctl --cacert=/etc/kubernetes/ssl/ca.pem  --cert=/etc/kubernetes/ssl/kubernetes.pem  --key=/etc/kubernetes/ssl/kubernetes-key.pem  --endpoints=https://172.16.5.43:2379 get /cn/com/bobfintech/cce/dockerRegistrySecret
+  ```
+
+  ```
+  export ETCDCTL_API=3 && etcdctl --cacert=/etc/kubernetes/ssl/ca.pem  --cert=/etc/kubernetes/ssl/kubernetes.pem  --key=/etc/kubernetes/ssl/kubernetes-key.pem  --endpoints=https://172.16.5.43:2379 get / --prefix --keys-only|grep cce-system|grep bobft-cce-web-server-nginx 
+  ```
+
+  
+
++ 查看linux状态
+
+```
+查看cpu: top 
+        lscpu
+查看内存： free -h
+磁盘： df -h
+
+```
+
+
+
 + 11
 + 11
 + 11

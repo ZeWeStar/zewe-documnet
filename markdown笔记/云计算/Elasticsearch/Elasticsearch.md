@@ -590,6 +590,137 @@ GET /website/blog/_mget
 }
 ```
 
++ 根据url 多索引搜索
+
+```
+#在所有的索引中搜索所有的类型
+/_search
+
+#在 gb 索引中搜索所有的类型
+/gb/_search
+
+#在 gb 和 us 索引中搜索所有的文档
+/gb,us/_search
+
+#在任何以 g 或者 u 开头的索引中搜索所有的类型
+/g*,u*/_search
+
+#在 gb 索引中搜索 user 类型
+/gb/user/_search
+
+#在 gb 和 us 索引中搜索 user 和 tweet 类型
+/gb,us/user,tweet/_search
+
+# 在所有的索引中搜索 user 和 tweet 类型
+/_all/user,tweet/_search
+
+```
+
+当在单一的索引下进行搜索的时候，Elasticsearch 转发请求到索引的每个分片中，可以是主分片也可以是副本分片，然后从每个分片中收集结果。多索引搜索恰好也是用相同的方式工作的—只是会涉及到更多的分片。
+
++ 1
+
+##### 分页
+
+和 SQL 使用 `LIMIT` 关键字返回单个 `page` 结果的方法相同，Elasticsearch 接受 `from` 和 `size` 参数：
+
+- **`size`**
+
+  显示应该返回的结果数量，默认是 `10`
+
+- **`from`**
+
+  显示应该跳过的初始结果数量，默认是 `0`
+
+```
+GET /_search?size=5
+GET /_search?size=5&from=5
+GET /_search?size=5&from=10
+```
+
+假设在一个有 5 个主分片的索引中搜索。 当我们请求结果的第一页（结果从 1 到 10 ），每一个分片产生前 10 的结果，并且返回给 *协调节点* ，协调节点对 50 个结果排序得到全部结果的前 10 个。
+
+在分布式系统中，**对结果排序的成本随分页的深度成指数上升。**这就是 web 搜索引擎对任何查询都不要返回超过 1000 个结果的原因。
+
+#### 排序
+
++ 默认排序
+
+在 Elasticsearch 中， *相关性得分* 由一个浮点数进行表示，并在搜索结果中通过 `_score` 参数返回， 默认排序是 `_score` 降序。
+
++ 字段值排序 `sort`
+
+  通过时间来对 tweets 进行排序是有意义的，最新的 tweets 排在最前。 我们可以使用 `sort` 参数进行实现：
+
+  ```
+  curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+  {
+      "query" : {
+          "bool" : {
+              "filter" : { "term" : { "user_id" : 1 }}
+          }
+      },
+      "sort": { "date": { "order": "desc" }}
+  }
+  '
+  
+  ```
+
+  
+
++ 多级排序
+
+  结合使用 `date` 和 `_score` 进行查询，并且匹配的结果首先按照日期排序，然后按照相关性排序：
+
+  ```
+  curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+  {
+      "query" : {
+          "bool" : {
+              "must":   { "match": { "tweet": "manage text search" }},
+              "filter" : { "term" : { "user_id" : 2 }}
+          }
+      },
+      "sort": [
+          { "date":   { "order": "desc" }},
+          { "_score": { "order": "desc" }}
+      ]
+  }
+  '
+  
+  ```
+
+  注：排序条件的顺序是很重要的。结果首先按第一个条件排序，仅当结果集的第一个 `sort` 值完全相同时才会按照第二个条件进行排序，以此类推。
+
++ 多值字段排序
+
+  一种情形是字段有多个值的排序、可以通过使用 `min` 、 `max` 、 `avg` 或是 `sum` *排序模式* 。
+
+  ```
+  "sort": {
+      "dates": {
+          "order": "asc",
+          "mode":  "min"
+      }
+  }
+  ```
+
++ 1
+
+
+
+
+
+#### 过滤与查询
+
++ 过滤 filter  boolean 是否
+
+  *必须* 匹配，但它以不评分、过滤模式来进行。这些语句对评分没有贡献，只是根据过滤标准来排除或包含文档。
+
++ 查询 一个“评分”的查询
+
+
+
 #### 批量操作
 
  `bulk` API 允许在单个步骤中进行多次 `create` 、 `index` 、 `update` 或 `delete` 请求。 如果你需要索引一个数据流比如日志事件，它可以排队和索引数百或数千批次。
@@ -744,6 +875,97 @@ curl -X PUT "localhost:9200/blogs?pretty" -H 'Content-Type: application/json' -d
 '
 ```
 
+### 倒排索引
+
+Elasticsearch 使用一种称为 *倒排索引* 的结构，它适用于快速的全文搜索。一个倒排索引由文档中所有不重复词的列表构成，对于其中每个词，有一个包含它的文档列表。
+
+#### 分析
+
+- 首先，将一块文本分成适合于倒排索引的独立的 *词条* ，
+- 之后，将这些词条统一化为标准格式以提高它们的“可搜索性”，或者 *recall*
+
+#### 分析器
+
++ 字符过滤器
+
+  字符串按顺序通过每个 *字符过滤器* 。他们的任务是在分词前整理字符串。一个字符过滤器可以用来去掉HTML，或者将 `&` 转化成 `and`。
+
++ 分词器
+
+  字符串被 *分词器* 分为单个的词条。一个简单的分词器遇到空格和标点的时候，可能会将文本拆分成词条。
+
++ Token过滤器
+
+  词条按顺序通过每个 *token 过滤器* 。这个过程可能会改变词条（例如，小写化 `Quick` ），删除词条（例如， 像 `a`， `and`， `the` 等无用词），或者增加词条（例如，像 `jump` 和 `leap` 这种同义词）。
+
++ 1
+
+Elasticsearch提供了开箱即用的字符过滤器、分词器和token 过滤器。 这些可以组合起来形成自定义的分析器以用于不同的目的。
+
+**Es内置分析器**
+
+```
+Set the shape to semi-transparent by calling set_trans(5)
+```
+
++ 标准分析器
+
+  标准分析器是Elasticsearch默认使用的分析器。它是分析各种语言文本最常用的选择。它根据 [Unicode 联盟](http://www.unicode.org/reports/tr29/) 定义的 *单词边界* 划分文本。删除绝大部分标点。最后，将词条小写。
+
+  ```
+  set, the, shape, to, semi, transparent, by, calling, set_trans, 5
+  ```
+
++ 简单分析器
+
+  简单分析器在任何不是字母的地方分隔文本，将词条小写。
+
+  ```
+  set, the, shape, to, semi, transparent, by, calling, set, trans
+  ```
+
++ 空格分析器
+
+  空格分析器在空格的地方划分文本。
+
+  ```
+  Set, the, shape, to, semi-transparent, by, calling, set_trans(5)
+  ```
+
++ 语言分析器
+
+  特定语言分析器可用于 [很多语言](https://www.elastic.co/guide/en/elasticsearch/reference/5.6/analysis-lang-analyzer.html)。它们可以考虑指定语言的特点。例如， `英语` 分析器附带了一组英语无用词（常用单词，例如 `and` 或者 `the` ，它们对相关性没有多少影响），它们会被删除。 由于理解英语语法的规则，这个分词器可以提取英语单词的 *词干* 。
+
+  ```
+  set, shape, semi, transpar, call, set_tran, 5
+  ```
+
+  注意看 `transparent`、 `calling` 和 `set_trans` 已经变为词根格式。
+
++ 1
+
+分析器使用
+
+- 当你查询一个 *全文* 域时， 会对查询字符串应用相同的分析器，以产生正确的搜索词条列表。
+
+  ```
+  # 在 _all 域查询 2014-09-15，它首先分析查询字符串，产生匹配 2014， 09， 或 15 中 任意 词条的查询。
+  GET /_search?q=2014-09-15
+  ```
+
+- 当你查询一个 *精确值* 域时，不会分析查询字符串，而是搜索你指定的精确值。
+
+  ```
+  # date 域查询 2014-09-15，它寻找 精确 日期
+  GET /_search?q=date:2014-09-15
+  ```
+
+- 1
+
+
+
+
+
 
 
 ## 数据存储
@@ -830,7 +1052,7 @@ shard = hash(routing) % number_of_primary_shards
 
 
 
-新建、索引和删除 请求都是 *写* 操作， 必须在主分片上面完成之后才能被复制到相关的副本分片
+新建、索引和删除 请求都是  `写`  操作， 必须在主分片上面完成之后才能被复制到相关的副本分片
 
 ![](Elasticsearch.assets/elas_0402.png)
 
@@ -857,6 +1079,35 @@ shard = hash(routing) % number_of_primary_shards
 在处理读取请求时，协调结点在每次请求的时候都会通过轮询所有的副本分片来达到负载均衡。
 
 在文档被检索时，**已经被索引的文档可能已经存在于主分片上但是还没有复制到副本分片。 在这种情况下，副本分片可能会报告文档不存在**，但是主分片可能成功返回文档。 一旦索引请求成功返回给用户，文档在主分片和副本分片都是可用的。
+
+#### 局部更新文档
+
+![](Elasticsearch.assets/elas_0404.png)
+
+1. 客户端向 `Node 1` 发送更新请求。
+2. 它将请求转发到主分片所在的 `Node 3` 。
+3. `Node 3` 从主分片检索文档，修改 `_source` 字段中的 JSON ，并且尝试重新索引主分片的文档。 如果文档已经被另一个进程修改，它会**重试**步骤 3 ，超过 `retry_on_conflict` 次后放弃。
+4. 如果 `Node 3` 成功地更新文档，它将新版本的文档并行转发到 `Node 1` 和 `Node 2` 上的副本分片，重新建立索引。 一旦所有副本分片都返回成功， `Node 3` 向协调节点也返回成功，协调节点向客户端返回成功。
+
+`update` API 还接受在 [新建、索引和删除文档](https://www.elastic.co/guide/cn/elasticsearch/guide/current/distrib-write.html) 章节中介绍的 `routing` 、 `replication` 、 `consistency` 和 `timeout` 参数。
+
+**当主分片把更改转发到副本分片时， 它不会转发更新请求。 相反，它转发完整文档的新版本。**
+
+#### 批量文档 bulk
+
+![](Elasticsearch.assets/elas_0406.png)
+
+`bulk` API 按如下步骤顺序执行：
+
+1. 客户端向 `Node 1` 发送 `bulk` 请求。
+2. `Node 1` 为每个节点创建一个批量请求，**并将这些请求并行转发到每个包含主分片的节点主机。**
+3. **主分片一个接一个按顺序执行每个操作**。当每个操作成功时，主分片并行转发新文档（或删除）到副本分片，然后执行下一个操作。 一旦所有的副本分片报告所有操作成功，该节点将向协调节点报告成功，协调节点将这些响应收集整理并返回给客户端。
+
+`bulk` API 还可以在整个批量请求的最顶层使用 `consistency` 参数，以及在每个请求中的元数据中使用 `routing` 参数。
+
+
+
+
 
 
 
