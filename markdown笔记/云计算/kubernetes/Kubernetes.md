@@ -253,6 +253,195 @@ Kubernetes Operator概念是由CoreOS的工程师于2016年提出的，它是在
 
 
 
+## Pod
+
+### 玩转pod调度
+
+#### kubernetes 调度器
+
+在 Kubernetes 中，*调度* 是指将 [Pod](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/) 放置到合适的 [Node](https://kubernetes.io/zh/docs/concepts/architecture/nodes/) 上，然后对应 Node 上的 [Kubelet](https://kubernetes.io/docs/reference/generated/kubelet) 才能够运行这些 pod。
+
+##### kube-scheduler
+
+###### 过程
+
+一个控制面进程，负责将 Pods 指派到节点上。 调度器基于约束和可用资源为调度队列中每个 Pod 确定其可合法放置的节点。 调度器之后对所有合法的节点进行排序，将 Pod 绑定到一个合适的节点。 在同一个集群中可以使用多个不同的调度器；
+
++ 过滤
+
+  过滤阶段会将所有满足 Pod 调度需求的 Node 选出来，得出一个 Node 列表，里面包含了所有可调度节点；如果列表为空，代表这个pod不可调度。
+
++ 打分
+
+  调度器会为 Pod 从所有可调度节点中选取一个最合适的 Node。 根据当前启用的打分规则，调度器会给每一个可调度节点进行打分。最后调度器会把pod 调度到得分最高的一个node上去
+
+
+
+###### 调度策略 ？
+
+###### 调度配置 ？
+
+
+
+### nodeSelector
+
+约束pod在特定的node上运行
+
+**内置的节点标签**， 需注意可改动
+
+- [`kubernetes.io/hostname`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#kubernetes-io-hostname) 
+- [`failure-domain.beta.kubernetes.io/zone`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#failure-domainbetakubernetesiozone)
+- [`failure-domain.beta.kubernetes.io/region`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#failure-domainbetakubernetesioregion)
+- [`topology.kubernetes.io/zone`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#topologykubernetesiozone)
+- [`topology.kubernetes.io/region`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#topologykubernetesiozone)
+- [`beta.kubernetes.io/instance-type`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#beta-kubernetes-io-instance-type)
+- [`node.kubernetes.io/instance-type`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#nodekubernetesioinstance-type)
+- [`kubernetes.io/os`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#kubernetes-io-os)
+- [`kubernetes.io/arch`](https://kubernetes.io/zh/docs/reference/kubernetes-api/labels-annotations-taints/#kubernetes-io-arch)
+
+
+
+### 亲和性、反亲和性
+
+#### 节点亲和性
+
+点亲和性概念上类似于 `nodeSelector`，它使你可以根据节点上的标签来约束 Pod 可以调度到哪些节点。
+
++ requiredDuringSchedulingIgnoredDuringExecution
+
+  硬需求，*必须*满足的规则与nodeSelector一致
+
+  如果你指定了多个与 `nodeAffinity` 类型关联的 `nodeSelectorTerms`，则 **如果其中一个** `nodeSelectorTerms` 满足的话，pod将可以调度到节点上。
+
+  如果你指定了多个与 `nodeSelectorTerms` 关联的 `matchExpressions`，则 **只有当所有** `matchExpressions` 满足的话，Pod 才会可以调度到节点上。
+
++ preferredDuringSchedulingIgnoredDuringExecution
+
+  调度器将尝试执行但不能保证的*偏好*，如果无法满足，可将pod调度到其他项目中去
+  
+  weight 范围是 1-100。 对于每个符合所有调度要求（资源请求、RequiredDuringScheduling 亲和性表达式等） 的节点，调度器将遍历该字段的元素来计算总和，并且如果节点匹配对应的 MatchExpressions，则添加“权重”到总和。 然后将这个评分与该节点的其他优先级函数的评分进行组合。 总分最高的节点是最优选的。
+
+注： IgnoredDuringExecution 意味着已调度到node上后，node运行中发生改变，不再满足于pod的亲和性规则，pod可在该node上继续运行。
+
+通过 `spec.affinity`
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: with-node-affinity
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/e2e-az-name
+            operator: In
+            values:
+            - e2e-az1
+            - e2e-az2
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 1
+        preference:
+          matchExpressions:
+          - key: another-node-label-key
+            operator: In
+            values:
+            - another-node-label-value
+  containers:
+  - name: with-node-affinity
+    image: k8s.gcr.io/pause:2.0
+```
+
+此节点亲和性规则表示，Pod 只能放置在具有标签键 `kubernetes.io/e2e-az-name` 且标签值为 `e2e-az1` 或 `e2e-az2` 的节点上。 另外，在满足这些标准的节点中，具有标签键为 `another-node-label-key` 且标签值为 `another-node-label-value` 的节点应该优先使用。
+
+同时指定了 `nodeSelector` 和 `nodeAffinity`，*两者*必须都要满足， 才能将 Pod 调度到候选节点上。
+
+##### topologyKey
+
+指定为一个拓扑域，可以使用内置的node标签
+
+od 间亲和性与反亲和性使你可以 *基于已经在节点上运行的 Pod 的标签* 来约束 Pod 可以调度到的节点，而不是基于节点上的标签。 规则的格式为“如果 X 节点上已经运行了一个或多个 满足规则 Y 的 Pod， 则这个 Pod 应该（或者在反亲和性的情况下不应该）运行在 X 节点”。 Y 表示一个具有可选的关联命令空间列表的 LabelSelector； 与节点不同，因为 Pod 是命名空间限定的（因此 Pod 上的标签也是命名空间限定的）， 因此作用于 Pod 标签的标签选择算符必须指定选择算符应用在哪个命名空间。 从概念上讲，**X 是一个拓扑域，如节点、机架、云供应商可用区、云供应商地理区域等。 你可以使用 `topologyKey` 来表示它，`topologyKey` 是节点标签的键以便系统 用来表示这样的拓扑域。**
+
+**topologyKey 的取值范围：**
+
+1. 对于 Pod 亲和性而言，在 `requiredDuringSchedulingIgnoredDuringExecution` 和 `preferredDuringSchedulingIgnoredDuringExecution` 中，`topologyKey` 不允许为空。
+2. 对于 Pod 反亲和性而言，`requiredDuringSchedulingIgnoredDuringExecution` 和 `preferredDuringSchedulingIgnoredDuringExecution` 中，`topologyKey` 都不可以为空。
+3. 对于 `requiredDuringSchedulingIgnoredDuringExecution` 要求的 Pod 反亲和性， 准入控制器 `LimitPodHardAntiAffinityTopology` 被引入以确保 `topologyKey` 只能是 `kubernetes.io/hostname`。如果你希望 `topologyKey` 也可用于其他定制 拓扑逻辑，你可以更改准入控制器或者禁用之。
+4. 除上述情况外，`topologyKey` 可以是任何合法的标签键。
+
+
+
+### 污点和容忍度
+
+[*节点亲和性*](https://kubernetes.io/zh/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity) 是 [Pod](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/) 的一种属性，它使 Pod 被吸引到一类特定的[节点](https://kubernetes.io/zh/docs/concepts/architecture/nodes/) （这可能出于一种偏好，也可能是硬性要求）。 *污点*（Taint）则相反——它使节点能够排斥一类特定的 Pod。
+
+容忍度（Toleration）是应用于 Pod 上的，允许（但并不要求）Pod 调度到带有与之匹配的污点的节点上。
+
+污点和容忍度（Toleration）相互配合，可以用来避免 Pod 被分配到不合适的节点上。 每个节点上都可以应用一个或多个污点，这表示对于那些不能容忍这些污点的 Pod，是不会被该节点接受的。
+
+
+
+#### 污点
+
+给节点 `node1` 增加一个污点，它的键名是 `key1`，键值是 `value1`，效果是 `NoSchedule`。 这表示只有拥有和这个污点相匹配的容忍度的 Pod 才能够被分配到 `node1` 这个节点。
+
+```
+kubectl taint nodes node1 key1=value1:NoSchedule
+```
+
+#### 容忍度
+
+给pod设置容忍度，PodSpec 中定义 Pod 的容忍度。 下面两个容忍度均与上面例子中使用 `kubectl taint` 命令创建的污点相匹配， 因此如果一个 Pod 拥有其中的任何一个容忍度都能够被分配到 `node1` ：
+
+```
+tolerations:
+- key: "key1"
+  operator: "Equal"
+  value: "value1"
+  effect: "NoSchedule"
+  
+---
+tolerations:
+- key: "key1"
+  operator: "Exists"
+  effect: "NoSchedule"
+```
+
+一个容忍度和一个污点相“匹配”是指它们有一样的键名和效果，并且：
+
+- 如果 `operator` 是 `Exists` （此时容忍度不能指定 `value`），或者
+- 如果 `operator` 是 `Equal` ，则它们的 `value` 应该相等
+
+如果一个容忍度的 `key` 为空且 operator 为 `Exists`， 表示这个容忍度与任意的 key 、value 和 effect 都匹配，即这个容忍度能容忍任意 taint。
+
+如果 `effect` 为空，则可以与所有键名 `key1` 的效果相匹配。
+
+#### effect 字段
+
++ NoSchedule
++ PreferNoSchedule
++ NoExecute
+
+一个节点添加多个污点，也可以给一个 Pod 添加多个容忍度设置。 Kubernetes 处理多个污点和容忍度的过程就像一个过滤器：从一个节点的所有污点开始遍历， 过滤掉那些 Pod 中存在与之相匹配的容忍度的污点。余下未被过滤的污点的 effect 值决定了 Pod 是否会被分配到该节点，特别是以下情况：
+
+- 如果未被过滤的污点中存在至少一个 effect 值为 `NoSchedule` 的污点， 则 Kubernetes 不会将 Pod 分配到该节点。
+- 如果未被过滤的污点中不存在 effect 值为 `NoSchedule` 的污点， 但是存在 effect 值为 `PreferNoSchedule` 的污点， 则 Kubernetes 会 *尝试* 不将 Pod 分配到该节点。
+- 如果未被过滤的污点中存在至少一个 effect 值为 `NoExecute` 的污点， 则 Kubernetes 不会将 Pod 分配到该节点（如果 Pod 还未在节点上运行）， 或者将 Pod 从该节点驱逐（如果 Pod 已经在节点上运行）。
+
+**当一个pod可以调度到一个节点时，必须容忍该节点上的所有污点**
+
+##### 污点驱除
+
+前文提到过污点的 effect 值 `NoExecute`会影响已经在节点上运行的 Pod
+
+- 如果 Pod 不能忍受 effect 值为 `NoExecute` 的污点，那么 Pod 将马上被驱逐
+- 如果 Pod 能够忍受 effect 值为 `NoExecute` 的污点，但是在容忍度定义中没有指定 `tolerationSeconds`，则 Pod 还会一直在这个节点上运行。
+- 如果 Pod 能够忍受 effect 值为 `NoExecute` 的污点，而且指定了 `tolerationSeconds`， 则 Pod 还能在这个节点上继续运行这个指定的时间长度。
+
+
+
 
 
 ## 存储
@@ -596,7 +785,54 @@ spec:
 
 
 
+## 服务发现 - Service
 
+将运行在一组 [Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/) 上的应用程序公开为网络服务的抽象方法。
+
+使用 Kubernetes，你无需修改应用程序即可使用不熟悉的服务发现机制。 Kubernetes 为 Pods 提供自己的 IP 地址，并为一组 Pod 提供相同的 DNS 名， 并且可以在它们之间进行负载均衡。
+
+
+
+### 基本组成
+
+| 属性                 | 取值类型 | 是否必填 | 取值说明                                                     |
+| -------------------- | -------- | -------- | ------------------------------------------------------------ |
+| spec.type            | string   | required | Service类型，即Service的访问方式，默认值为 ClusterIP;   <br>(1) ClusterIP: 虚拟的服务IP地址，用于集群内部pod访问（iptables规则修改）<br>(2)NodePort: 使用宿主机端口，外部通过node ip + 发布端口，访问服务<br>(3)LoadBalancer:使用外部负载均衡器完成到服务的分发，需在spec.status.loadBalancer指定外部负载均衡器地址 |
+| spec.clusterIP       | string   |          | 虚拟服务ip地址，无法直接ping 通，和pod ip 不一样，pod有虚拟网卡 |
+| spec.sessionAffinity | String   |          | 是否支持session轮询<br>ClientIP : 同一个客户端的访问请求都转发到同一个后端pod |
+|                      |          |          |                                                              |
+
+
+
+### 无selector的Service
+
+**当使用外部服务时**，可创建一个无selector的Svc，需在同一个namespace下建立一个同名的Endpoint
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+spec:
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 9376
+      
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: my-service
+subsets:
+  - addresses:
+      - ip: 192.0.2.42 #外部的ip
+    ports:
+      - port: 9376 #外部端口
+
+      
+      
+```
 
 
 
