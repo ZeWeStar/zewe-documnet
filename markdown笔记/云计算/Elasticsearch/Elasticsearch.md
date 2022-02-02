@@ -808,6 +808,406 @@ curl -X PUT "localhost:9200/website/blog/1?version=1&pretty" -H 'Content-Type: a
 
 
 
+## DSL语句
+
+Elasticsearch提供了基于JSON的完整查询DSL（Domain Specific Language 特定域的语言）来定义查
+询。将查询DSL视为查询的AST（抽象语法树），它由两种子句组成：
+
++ 叶子查询子句
+  叶子查询子句 在特定域中寻找特定的值，如 match，term或 range查询。
++ 复合查询子句
+  复合查询子句包装其他叶子查询或复合查询，并用于以逻辑方式组合多个查询（例如 bool或
+  dis_max查询），或更改其行为（例如 constant_score查询）。 
+
+### 基本语法
+
+```
+POST /索引库名/_search
+{
+  "query":{
+     "查询类型":{
+       "查询条件":"查询条件值"
+     }
+  }
+}
+```
+
+返回结果示例
+
++ took：查询花费时间，单位是毫秒
++ time_out：是否超时
++ shards：分片信息
++ hits：搜索结果总览对象
++ total：搜索到的总条数
++ max_score：所有结果中文档得分的最高分
++ hits：搜索结果的文档对象数组，每个元素是一条搜索到的文档信息
+  _index：索引库
+  _type：文档类型
+  _id：文档id
+  _score：文档得分
+  _source：文档的源数据 
+
+
+
+### 全文搜索
+
+全文搜索能够搜索已分析的文本字段，如电子邮件正文，商品描述等 。
+
+#### 匹配搜索  match 
+
+全文查询的标准查询，它可以对一个字段进行模糊、短语查询。 match queries 接收 text/numerics/dates, 对它们进行分词分析, 再组织成一个boolean查询。
+
+可通过operator 指定bool组合操作（or、and ）， 默认 or
+
+```
+POST /lagou-property/_search
+{
+  "query":{
+     "match":{
+        "title":"小米电视4A"
+     }
+  }
+}
+```
+
+ match 类型查询，会把查询条件进行分词，然后进行查询,多个词条之间是or的关系。上述将  "小米电视4A" 语句分为 “小米”，“电视”，“4A” 进行词条搜索。以 or 展示结果集，即把上述词条的都搜索出来。
+
+```
+{
+  "took" : 1,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 2,
+      "relation" : "eq"
+    },
+    "max_score" : 1.2044649,
+    "hits" : [
+      {
+        "_index" : "lagou-property",
+        "_type" : "_doc",
+        "_id" : "N4BmKn4Bz2uxrezJ8i2B",
+        "_score" : 1.2044649,
+        "_source" : {
+          "title" : "小米电视4A",
+          "images" : "http://image.lagou.com/12479122.jpg",
+          "price" : 4288
+        }
+      },
+      {
+        "_index" : "lagou-property",
+        "_type" : "_doc",
+        "_id" : "OIBnKn4Bz2uxrezJAi3X",
+        "_score" : 0.52354836,
+        "_source" : {
+          "title" : "小米手机",
+          "images" : "http://image.lagou.com/12479622.jpg",
+          "price" : 2699
+        }
+      }
+    ]
+  }
+}
+```
+
+**指定为 and 查找**
+
+```
+POST /lagou-property/_search
+{
+  "query":{
+     "match":{
+        "title": {"query":"小米电视4A", "operator": "and"}
+     }
+  }
+}
+```
+
+上述 只有同时包含 小米 和 电视 的词条才会被搜索到。 
+
+```
+{
+  "took" : 2,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 1,
+      "relation" : "eq"
+    },
+    "max_score" : 1.2044649,
+    "hits" : [
+      {
+        "_index" : "lagou-property",
+        "_type" : "_doc",
+        "_id" : "N4BmKn4Bz2uxrezJ8i2B",
+        "_score" : 1.2044649,
+        "_source" : {
+          "title" : "小米电视4A",
+          "images" : "http://image.lagou.com/12479122.jpg",
+          "price" : 4288
+        }
+      }
+    ]
+  }
+}
+```
+
+
+
+#### 短语搜索 match_phrase 
+
+match_phrase 查询用来对一个字段进行短语查询，可以指定 slop移动因子 
+
+```
+GET /lagou-property/_search
+{
+  "query": {
+    "match_phrase": {
+      "title": "小米电视4A"
+    }
+  }
+}
+
+```
+
+结果为完全短语 等于
+
+```
+{
+  "took" : 1,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 1,
+      "relation" : "eq"
+    },
+    "max_score" : 2.8330116,
+    "hits" : [
+      {
+        "_index" : "lagou-property",
+        "_type" : "_doc",
+        "_id" : "N4BmKn4Bz2uxrezJ8i2B",
+        "_score" : 2.8330116,
+        "_source" : {
+          "title" : "小米电视4A",
+          "images" : "http://image.lagou.com/12479122.jpg",
+          "price" : 4288
+        }
+      }
+    ]
+  }
+}
+```
+
+
+
+使用移动字段 slop, 即词汇短语中间可移动忽略几个词 进行匹配。
+
++ 移动 0 次，查询不到
+
+```
+GET /lagou-property/_search
+{
+  "query": {
+    "match_phrase": {
+      "title": {
+        "query": "小米 4A",
+        "slop": 0
+      }
+    }
+  }
+}
+
+--- 移动0次 ---
+{
+  "took" : 0,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 0,
+      "relation" : "eq"
+    },
+    "max_score" : null,
+    "hits" : [ ]
+  }
+}
+```
+
++ 移动1次 ，可查询到
+
+```
+GET /lagou-property/_search
+{
+  "query": {
+    "match_phrase": {
+      "title": {
+        "query": "小米 4A",
+        "slop": 1
+      }
+    }
+  }
+}
+
+--- 移动1次 ---
+{
+  "took" : 1,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 1,
+      "relation" : "eq"
+    },
+    "max_score" : 1.2441062,
+    "hits" : [
+      {
+        "_index" : "lagou-property",
+        "_type" : "_doc",
+        "_id" : "N4BmKn4Bz2uxrezJ8i2B",
+        "_score" : 1.2441062,
+        "_source" : {
+          "title" : "小米电视4A",
+          "images" : "http://image.lagou.com/12479122.jpg",
+          "price" : 4288
+        }
+      }
+    ]
+  }
+}
+```
+
+
+
+#### query_string 查询
+
+query_string Query提供了无需指定某字段而对文档全文进行匹配查询的一个高级查询,同时可以指定在
+哪些字段上进行匹配。 
+
+```
+GET /lagou-property/_search
+{
+  "query": {
+    "query_string": {
+      "query": "2699"
+    }
+  }
+}
+
+--- 未指定 title，直接查询内容 ---
+
+{
+  "took" : 33,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 1,
+      "relation" : "eq"
+    },
+    "max_score" : 1.0,
+    "hits" : [
+      {
+        "_index" : "lagou-property",
+        "_type" : "_doc",
+        "_id" : "OIBnKn4Bz2uxrezJAi3X",
+        "_score" : 1.0,
+        "_source" : {
+          "title" : "小米手机",
+          "images" : "http://image.lagou.com/12479622.jpg",
+          "price" : 2699
+        }
+      }
+    ]
+  }
+}
+
+
+--- 逻辑查询 ---
+# 逻辑查询 OR 两词或 
+GET /lagou-property/_search
+{
+  "query": {
+    "query_string": {
+      "query": "手机 OR 小米",
+      "default_field": "title"
+    }
+  }
+}
+
+# 逻辑查询 AND 两词与
+GET /lagou-property/_search
+{
+  "query": {
+    "query_string": {
+      "query": "手机 AND 小米",
+      "default_field": "title"
+    }
+  }
+}
+
+# ~数字：模糊查询可修正几个数字
+GET /lagou-property/_search
+{
+  "query": {
+    "query_string": {
+      "query": "大米~1",
+      "default_field": "title"
+    }
+  }
+}
+
+
+#多字段支持
+GET /lagou-property/_search
+{
+"query": {
+"query_string" : {
+"query":"2699",
+"fields": [ "title","price"]
+}
+}
+}
+
+```
+
+
+
+
+
 ## 集群
 
 一个运行中的 Elasticsearch 实例称为一个节点，而集群是由一个或者多个拥有相同 `cluster.name` 配置的节点组成， 它们共同承担数据和负载的压力。当有节点加入集群中或者从集群中移除节点时，集群将会重新平均分布所有的数据。
@@ -964,7 +1364,100 @@ Set the shape to semi-transparent by calling set_trans(5)
 
 
 
+### **索引操作**
 
++ 查看状态
+
+  ```
+  GET /_cat/indices?v
+  ```
+
+  绿色：索引的所有分片都正常分配。
+  黄色：至少有一个副本没有得到正确的分配。
+  红色：至少有一个主分片没有得到正确的分配。 
+
++ 打开索引
+
+  ```
+  POST /索引名称/_open
+  ```
+
++ 关闭索引
+
+  ```
+  POST /索引名称/_close
+  ```
+
++ 删除索引
+
+  ```
+  DELETE /索引名称1,索引名称2,索引名称3...
+  ```
+
++ 1
+
+### 映射 Mapping
+
+索引创建之后，等于有了关系型数据库中的database。Elasticsearch7.x取消了索引type类型的设置，
+不允许指定类型，默认为_doc，但字段仍然是有的，我们需要设置字段的约束信息，叫做字段映射
+（mapping）
+字段的约束包括但不限于：
+
++ type：类型，可以是text、long、short、date、integer、object等
++ index：是否索引，默认为true
++ store：是否存储，默认为false
++ analyzer：指定分词器 
+
+```
+PUT /索引库名/_mapping
+{
+"properties": {
+"字段名": {
+"type": "类型",
+"index": true， 
+"store": true，
+"analyzer": "分词器"
+}
+}
+}
+```
+
+索引类型
+
+**1、String类型，又分两种：**
+
++ text：可分词，不可参与聚合
++ keyword：不可分词，数据会作为完整字段进行匹配，可以参与聚合
++ Numerical：数值类型，分两类
+  基本数据类型：long、interger、short、byte、double、float、half_float
+  浮点数的高精度类型：scaled_float
+  需要指定一个精度因子，比如10或100。elasticsearch会把真实值乘以这个因子后存
+  储，取出时再
+  原。
++ Date：日期类型
+  elasticsearch可以对日期格式化为字符串存储，但是建议我们存储为毫秒值，存储为long，节省
+  空间。
++ Array：数组类型
+  进行匹配时，任意一个元素满足，都认为满足
+  排序时，如果升序则用数组中的最小值来排序，如果降序则用数组中的最大值来排序
++ Object：对象
+  如果存储到索引库的是对象类型，例如上面的girl，会把girl变成两个字段：girl.name和girl.age
+
+**2、index ，影响字段的索引情况：**
+
++ true：字段会被索引，则可以用来进行搜索。默认值就是true
++ false：字段不会被索引，不能用来搜索
+  index的默认值就是true，也就是说你不进行任何配置，所有字段都会被索引。
+  但是有些字段是我们不希望被索引的，比如企业的logo图片地址，就需要手动设置index为false。、
+
+**3、store 是否将数据进行独立存储。**
+原始的文本会存储在 _source 里面，默认情况下其他提取出来的字段都不是独立存储的，是从
+_source 里面提取出来的。当然你也可以独立的存储某个字段，只要设置store:true即可，获取独立存
+储的字段要比从_source中解析快得多，但是也会占用更多的空间，所以要根据实际业务需求来设置，
+默认为false。
+
+**4、analyzer：指定分词器**
+一般我们处理中文会选择ik分词器 ik_max_word ik_smart 
 
 
 
