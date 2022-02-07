@@ -1087,7 +1087,18 @@ kubectl logs -f bobft-cce-api-server-6d66d9464-bnrcj -c bobft-cce-api-server -n 
   export ETCDCTL_API=3 && etcdctl --cacert=/etc/kubernetes/ssl/ca.pem  --cert=/etc/kubernetes/ssl/kubernetes.pem  --key=/etc/kubernetes/ssl/kubernetes-key.pem  --endpoints=https://172.16.5.43:2379 get / --prefix --keys-only|grep cce-system|grep bobft-cce-web-server-nginx 
   ```
 
-  
+
+
+
+```
+export ETCDCTL_API=3 && etcdctl --cacert=/etc/kubernetes/ssl/ca.pem  --cert=/etc/kubernetes/ssl/kubernetes.pem  --key=/etc/kubernetes/ssl/kubernetes-key.pem  --endpoints=https://172.16.5.43:2379 get / --prefix --keys-only|grep /cn/com/bobfintech/cce/datacenter/base
+```
+
+```
+
+```
+
+
 
 + 查看linux状态
 

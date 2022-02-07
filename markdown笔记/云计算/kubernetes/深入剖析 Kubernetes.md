@@ -2,6 +2,18 @@
 
 ## 基础概念
 
+### 知识点
+
++ 金丝雀部署：
+
+  优先发布一台或少量机器升级，等验证无误后再更新其他机器。优点是用户影响范围小，不足之处是要额外控制如何做自动更新。
+
++ 蓝绿部署：
+
+  2组机器，蓝代表当前的V1版本，绿代表已经升级完成的V2版本。通过LB将流量全部导入V2完成升级部署。优点是切换快速，缺点是影响全部用户。
+
++ 
+
 ### 云类型
 
 + 私有云
@@ -179,10 +191,309 @@ pod.status.phase，就是 Pod 的当前状态：
 
 + Pending。这个状态意味着，Pod 的 YAML 文件已经提交给了 Kubernetes，API 对象已经被创建并保存在 Etcd 当中。但是，这个 Pod 里有些容器因为某种原因而不能被顺利创建。比如，调度不成功。
 
-+ Running。这个状态下，Pod 已经调度成功，跟一个具体的节点绑定。它包含的容器都已经创建成功，并且至少有一个正在运行中。
++ Running。这个状态下，Pod 已经调度成功，跟一个具体的节点绑定。它包含的容器都已经创建成功，并且至少有一个正在运行中。（只有一个容器是run）整个pod就是Running 体现. Pod字段 Ready 标识的正常容器的的个数。
 + Succeeded。这个状态意味着，Pod 里的所有容器都正常运行完毕，并且已经退出了。这种情况在运行一次性任务时最为常见。
 + Failed。这个状态下，Pod 里至少有一个容器以不正常的状态（非 0 的返回码）退出。这个状态的出现，意味着你得想办法 Debug 这个容器的应用，比如查看 Pod 的 Events 和日志。
 + Unknown。这是一个异常状态，意味着 Pod 的状态不能持续地被 kubelet 汇报给 kube-apiserver，这很有可能是主从节点（Master 和 Kubelet）间的通信出现了问题。
 
 Pod 对象的 Status 字段，还可以再细分出一组 Conditions：PodScheduled、Ready、Initialized，以及 Unschedulable。它们主要用于描述造成当前 Status 的具体原因
+
+![image2021-12-30_17-39-15](深入剖析 Kubernetes.assets/image2021-12-30_17-39-15.png)
+
+
+
+#### 健康检查与恢复机制
+
+##### livenessProbe
+
+Pod 里的容器定义一个健康检查“探针”（Probe）。kubelet 就会根据这个 Probe 的返回值决定这个容器的状态，而不是直接以容器镜像是否运行（来自 Docker 返回的信息）作为依据。这种机制，是生产环境中保证应用健康存活的重要手段。
+
+健康探针可以为 
+
++ exec 执行命令
+
+  ```
+  ...
+      livenessProbe:
+        exec:
+          command:
+          - cat
+          - /tmp/healthy
+        initialDelaySeconds: 5
+        periodSeconds: 5
+  ```
+
++ httpGet http请求
+
+  ```
+  ...
+  livenessProbe:
+       httpGet:
+         path: /healthz
+         port: 8080
+         httpHeaders:
+         - name: X-Custom-Header
+           value: Awesome
+         initialDelaySeconds: 3
+         periodSeconds: 3
+  ```
+
+  
+
++ tcpSocket tcp请求
+
+  ```
+      ...
+      livenessProbe:
+        tcpSocket:
+          port: 8080
+        initialDelaySeconds: 15
+        periodSeconds: 20
+  ```
+
+  
+
+
+
+##### restartPolicy
+
+**当健康检查不通过时，就进行pod重启**， Kubernetes 里的 Pod 恢复机制，也叫 restartPolicy。它是 Pod 的 Spec 部分的一个标准字段（pod.spec.restartPolicy），默认值是 Always，即：任何时候这个容器发生了异常，它一定会被重新创建。
+
++ Always：在任何情况下，只要容器不在运行状态，就自动重启容器；
++ OnFailure: 只在容器 异常时才自动重启容器；
++ Never: 从来不重启容器。
+
+注意：Pod 的恢复过程，永远都是发生在当前节点上，而不会跑到别的节点上去。事实上，一旦一个 Pod 与一个节点（Node）绑定，除非这个绑定发生了变化（pod.spec.node 字段被修改），否则它永远都不会离开这个节点。这也就意味着，如果这个宿主机宕机了，这个 Pod 也不会主动迁移到其他节点上去。
+
+**若想让pod重新调度到其他node，则需要 工作负载（Deployment）的控制器。**
+
+
+
+### 控制器
+
+Pod 对象，其实就是容器的升级版。它对容器进行了组合，添加了更多的属性和字段。控制器直接操作Pod完成kuberneters 的操作。
+
+Kubernetes 架构有一个叫作 kube-controller-manager 的组件。就是一系列控制器的集合。我们可以查看一下 Kubernetes 项目的 pkg/controller 目录：
+
+```
+$ cd kubernetes/pkg/controller/
+$ ls -d */              
+deployment/             job/                    podautoscaler/          
+cloud/                  disruption/             namespace/              
+replicaset/             serviceaccount/         volume/
+cronjob/                garbagecollector/       nodelifecycle/          replication/            statefulset/            daemon/
+...
+```
+
+**控制器遵循Kubernetes 项目中的一个通用编排模式：控制循环（control loop）**
+
+```
+
+for {
+  实际状态 := 获取集群中对象X的实际状态（Actual State）
+  期望状态 := 获取集群中对象X的期望状态（Desired State）
+  if 实际状态 == 期望状态{
+    什么都不做
+  } else {
+    执行编排动作，将实际状态调整为期望状态
+  }
+}
+```
+
++ 实际状态：从kuberneters中获取实际状态
++ 期望状态：一般来自于用户提交的Yaml文件
+
+类似 Deployment 这样的一个控制器，实际上都是由**上半部分的控制器定义（包括期望状态），加上下半部分的被控制对象的模板组成的。**
+
+
+
+#### Deployment
+
+Pod 的“水平扩展 / 收缩”（horizontal scaling out/in）； 滚动更新
+
+实际上 Deployment 并不实质控制 pod, 而是通过ReplicaSet 控制，实际上是一种“层层控制”的关系。
+
+![711c07208358208e91fa7803ebc73058.webp](深入剖析 Kubernetes.assets/711c07208358208e91fa7803ebc73058.webp.jpg)
+
+##### 水平扩展 / 收缩
+
+Deployment 同样通过“控制器模式”，来修改 ReplicaSet 的控制副本数。**ReplicaSet 负责通过“控制器模式”，保证系统中 Pod 的个数永远等于指定的个数**（比如，3 个）。这也正是 Deployment 只允许容器的 restartPolicy=Always 的主要原因：只有在容器能保证自己始终是 Running 状态的前提下，ReplicaSet 调整 Pod 的个数才有意义。
+
+##### 滚动更新
+
+Deployment 同样通过“控制器模式”，来操作 ReplicaSet 的个数 实现 “滚动更新”。**当pod的模板属性变化时，Deployment 会创建一个新的 ReplicaSet ，逐个替代旧 ReplicaSet 的pod. 将一个集群中正在运行的多个 Pod 版本，交替地逐一升级的过程，就是“滚动更新”。**
+
+**保证服务的连续性**： Deployment Controller 还会确保，在任何时间窗口内，只有指定比例的 Pod 处于离线状态。同时，它也会确保，在任何时间窗口内，只有指定比例的新 Pod 被创建出来。这两个比例的值都是可以配置的，默认都是 DESIRED 值的 25%。
+
+![bbc4560a053dee904e45ad66aac7145d.webp](深入剖析 Kubernetes.assets/bbc4560a053dee904e45ad66aac7145d.webp.jpg)
+
+##### 回滚
+
+kubectl rollout undo 命令，就能把整个 Deployment 回滚到上一个版本：
+
+```
+$ kubectl rollout undo deployment/nginx-deployment
+deployment.extensions/nginx-deployment
+```
+
+若要回退更前的版本，我需要使用 kubectl rollout history 命令，查看每次 Deployment 变更对应的版本
+
+```
+
+$ kubectl rollout history deployment/nginx-deployment
+deployments "nginx-deployment"
+REVISION    CHANGE-CAUSE
+1           kubectl create -f nginx-deployment.yaml --record
+2           kubectl edit deployment/nginx-deployment
+3           kubectl set image deployment/nginx-deployment nginx=nginx:1.91
+
+# 指定版本回退
+
+$ kubectl rollout undo deployment/nginx-deployment --to-revision=2
+deployment.extensions/nginx-deployment
+```
+
+
+
+#### StatefulSet
+
+StatefulSet: **有状态应用**
+
+在分布式场景中，多个实例之间，往往有依赖关系，比如：主从关系、主备关系。或者数据存储类应用，它的多个实例，往往都会在本地磁盘上保存一份数据。而这些实例一旦被杀掉，即便重建出来，实例与数据之间的对应关系也已经丢失，从而导致应用失败。
+
+这种实例之间有不对等关系，以及实例对外部数据有依赖关系的应用，就被称为“有状态应用”（Stateful Application）。	
+
+##### 状态
+
++ 拓扑状态
+
+  应用的多个实例之间不是完全对等的关系。这些应用实例，**必须按照某些顺序启动**，比如应用的主节点 A 要先于从节点 B 启动。而如果你把 A 和 B 两个 Pod 删除掉，它们再次被创建出来时也必须严格按照这个顺序才行。并且，新创建出来的 Pod，**必须和原来 Pod 的网络标识一样**，这样原先的访问者才能使用同样的方法，访问到这个新 Pod。
+
++ 存储状态
+
+  **应用的多个实例分别绑定了不同的存储数据。**对于这些应用实例来说，**Pod A 第一次读取到的数据，和隔了十分钟之后再次读取到的数据，应该是同一份，哪怕在此期间 Pod A 被重新创建过。**这种情况最典型的例子，就是一个数据库应用的多个存储实例。
+
++ 1
+
+**StatefulSet 的核心功能，就是通过某种方式记录这些状态，然后在 Pod 被重新创建时，能够为新 Pod 恢复这些状态。**
+
+
+
+##### Headless Service
+
+Service 是 Kubernetes 项目中用来将一组 Pod 暴露给外界访问的一种机制。用户访问Service,就可以访问到某个具体的 Pod。
+
++ Service VIP
+
+  Virtual IP，即：虚拟 IP；当我访问 10.0.23.1 这个 Service 的 IP 地址时，10.0.23.1 其实就是一个 VIP，它会把请求转发到该 Service 所代理的某一个 Pod 上。
+
++ Service DNS
+
+  只要我访问“my-svc.my-namespace.svc.cluster.local”这条 DNS 记录，就可以访问到名叫 my-svc 的 Service 所代理的某一个 Pod。
+
+  + Normal Service
+
+    Normal Service，访问“my-svc.my-namespace.svc.cluster.local”解析到的，正是 my-svc 这个 Service 的 VIP，后面的流程就跟 VIP 方式一致了。
+
+  + Headless Service
+
+    访问“my-svc.my-namespace.svc.cluster.local”解析到的，直接就是 my-svc 代理的某一个 Pod 的 IP 地址。可以看到，这里的区别在于，**Headless Service 不需要分配一个 VIP，而是可以直接以 DNS 记录的方式解析出被代理 Pod 的 IP 地址。**
+
+    ```
+    
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: nginx
+      labels:
+        app: nginx
+    spec:
+      ports:
+      - port: 80
+        name: web
+      clusterIP: None
+      selector:
+        app: nginx
+    ```
+
+    **标准Service模板Yaml. 但 clusterIP 字段的值是：None**
+
+    Headless 所代理的所有 Pod 的 IP 地址，都会被绑定一个这样格式的 DNS 记录。 只要你知道了一个 Pod 的名字，以及它对应的 Service 的名字，你就可以非常确定地通过这条 DNS 记录访问到 Pod 的 IP 地址。
+
+    ```
+    <pod-name>.<svc-name>.<namespace>.svc.cluster.local
+    ```
+
+
+
+##### 创建pod
+
+StatefulSet 给它所管理的所有 Pod 的名字，进行了编号，编号规则是：
+
+```
+<statefulset name>-<ordinal index>
+```
+
+这些编号都是从 0 开始累加，与 StatefulSet 的每个 Pod 实例一一对应，绝不重复。
+
+更重要的是，这些 Pod 的创建，也是**严格按照编号顺序进行的。比如，在 web-0 进入到 Running 状态、并且细分状态（Conditions）成为 Ready 之前，web-1 会一直处于 Pending 状态。**
+
+Kubernetes 中的StatefulSet 就成功地将 **Pod 的拓扑状态（比如：哪个节点先启动，哪个节点后启动），按照 Pod 的“名字 + 编号”的方式固定了下来。**此外，Kubernetes 还为每一个 Pod 提供了一个固定并且唯一的访问入口，即：这个 Pod 对应的 DNS 记录。
+
+这些状态，**在 StatefulSet 的整个生命周期里都会保持不变，绝不会因为对应 Pod 的删除或者重新创建而失效。需要新建或者删除 Pod 进行“调谐”的时候，它会严格按照这些 Pod 编号的顺序，逐一完成这些操作。**
+
+
+
+##### 存储状态
+
+```
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: web
+spec:
+  serviceName: "nginx"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.9.1
+        ports:
+        - containerPort: 80
+          name: web
+        volumeMounts:
+        - name: www
+          mountPath: /usr/share/nginx/html
+  volumeClaimTemplates:
+  - metadata:
+      name: www
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+```
+
+StatefulSet 额外添加了一个 volumeClaimTemplates 字段。被这个 StatefulSet 管理的 Pod，都会声明一个对应的 PVC；而这个 PVC 的定义，就来自于 volumeClaimTemplates 这个模板字段。更重要的是，这个 PVC 的名字，会被分配一个与这个 Pod 完全一致的编号。`<PVC 名字 >-<StatefulSet 名字 >-< 编号 >`
+
+当StatefulSet 控制的pod 删除一个（web-0）后，新的 web-0 Pod 被创建出来之后，Kubernetes 为它查找名叫 www-web-0 的 PVC 时，就会直接找到旧 Pod 遗留下来的同名的 PVC，进而找到跟这个 PVC 绑定在一起的 PV。
+
+**通过这种方式，Kubernetes 的 StatefulSet 就实现了对应用存储状态的管理。**
+
+##### 总结
+
+StatefulSet 的控制器直接管理的是 Pod。StatefulSet 里的不同 Pod 实例，不再像 ReplicaSet 中那样都是完全一样的，而是有了细微区别的。而 StatefulSet 区分这些实例的方式，就是通过在 Pod 的名字里加上事先约定好的编号。
+
+**有了这个编号后，StatefulSet 就使用 Kubernetes 里的两个标准功能：Headless Service 和 PV/PVC，实现了对 Pod 的拓扑状态和存储状态的维护。**
+
+
 
