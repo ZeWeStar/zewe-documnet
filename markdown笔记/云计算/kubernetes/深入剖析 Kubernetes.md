@@ -497,3 +497,109 @@ StatefulSet 的控制器直接管理的是 Pod。StatefulSet 里的不同 Pod �
 
 
 
+#### DaemonSet
+
+##### 特征
+
++ 这个 Pod 运行在 Kubernetes 集群里的每一个节点（Node）上；
+
++ 每个节点上只有一个这样的 Pod 实例；
+
++ 当有新的节点加入 Kubernetes 集群后，该 Pod 会自动地在新节点上被创建出来；而当旧节点被删除后，它上面的 Pod 也相应地会被回收掉。
+
+适用一些插件：
+
++ 各种网络插件的 Agent 组件，都必须运行在每一个节点上，用来处理这个节点上的容器网络；
+
++ 各种存储插件的 Agent 组件，也必须运行在每一个节点上，用来在这个节点上挂载远程存储目录，操作容器的 Volume 目录；
+
++ 各种监控组件和日志组件，也必须运行在每一个节点上，负责这个节点上的监控信息和日志搜集。
+
+
+
+##### DaemonSet Controller
+
+从 Etcd 里获取所有的 Node 列表，然后遍历所有的 Node。这时，它就可以很容易地去检查，当前这个 Node 上是不是有一个携带了key=value 标签的 Pod 在运行。
+
++ 没有这种 Pod，那么就意味着要在这个 Node 上创建这样一个 Pod；
++ 有这种 Pod，但是数量大于 1，那就说明要把多余的 Pod 从这个 Node 上删除掉；
++ 正好只有一个这种 Pod，那说明这个节点是正常的。
+
+
+
+如何在指定的node 上运行一个pod
+
++ nodeSelector 与 nodeName
+
+```
+nodeSelector:
+    name: <Node名字>
+```
+
++ nodeAffinity  与 Toleration
+
+  ```
+  
+  apiVersion: v1
+  kind: Pod
+  metadata:
+    name: with-node-affinity
+  spec:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: metadata.name
+              operator: In
+              values:
+              - node-geektime
+  ```
+
+  ```
+  
+  apiVersion: v1
+  kind: Pod
+  metadata:
+    name: with-toleration
+  spec:
+    tolerations:
+    - key: node.kubernetes.io/unschedulable
+      operator: Exists
+      effect: NoSchedule
+  ```
+
+
+
+**节点亲和性**
+
+DaemonSet Controller 会在创建 Pod 的时候，自动在这个 Pod 的 API 对象里，加上这样一个 nodeAffinity 定义。DaemonSet 并不需要修改用户提交的 YAML 文件里的 Pod 模板，而是在向 Kubernetes 发起请求之前，直接修改根据模板生成的 Pod 对象。
+
+- requiredDuringSchedulingIgnoredDuringExecution
+
+  硬需求，*必须*满足的规则与nodeSelector一致
+
+  如果你指定了多个与 `nodeAffinity` 类型关联的 `nodeSelectorTerms`，则 **如果其中一个** `nodeSelectorTerms` 满足的话，pod将可以调度到节点上。
+
+  如果你指定了多个与 `nodeSelectorTerms` 关联的 `matchExpressions`，则 **只有当所有** `matchExpressions` 满足的话，Pod 才会可以调度到节点上。
+
+- preferredDuringSchedulingIgnoredDuringExecution
+
+  调度器将尝试执行但不能保证的*偏好*，如果无法满足，可将pod调度到其他项目中去
+
+  weight 范围是 1-100。 对于每个符合所有调度要求（资源请求、RequiredDuringScheduling 亲和性表达式等） 的节点，调度器将遍历该字段的元素来计算总和，并且如果节点匹配对应的 MatchExpressions，则添加“权重”到总和。 然后将这个评分与该节点的其他优先级函数的评分进行组合。 总分最高的节点是最优选的。
+
+注： IgnoredDuringExecution 意味着已调度到node上后，node运行中发生改变，不再满足于pod的亲和性规则，pod可在该node上继续运行。
+
+
+
+**污点与容忍度**
+
+在 Kubernetes 项目中，当一个节点的网络插件尚未安装时，这个节点就会被自动加上名为node.kubernetes.io/network-unavailable的“污点”。而通过这样一个 Toleration，调度器在调度这个 Pod 的时候，就会忽略当前节点上的“污点”，从而成功地将网络插件的 Agent 组件调度到这台机器上启动起来。
+
+[*节点亲和性*](https://kubernetes.io/zh/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity) 是 [Pod](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/) 的一种属性，它使 Pod 被吸引到一类特定的[节点](https://kubernetes.io/zh/docs/concepts/architecture/nodes/) （这可能出于一种偏好，也可能是硬性要求）。 *污点*（Taint）则相反——它使节点能够排斥一类特定的 Pod。
+
+容忍度（Toleration）是应用于 Pod 上的，允许（但并不要求）Pod 调度到带有与之匹配的污点的节点上。
+
+污点和容忍度（Toleration）相互配合，可以用来避免 Pod 被分配到不合适的节点上。 每个节点上都可以应用一个或多个污点，这表示对于那些不能容忍这些污点的 Pod，是不会被该节点接受的。
+
