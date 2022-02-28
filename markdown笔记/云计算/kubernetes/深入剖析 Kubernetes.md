@@ -12,7 +12,11 @@
 
   2组机器，蓝代表当前的V1版本，绿代表已经升级完成的V2版本。通过LB将流量全部导入V2完成升级部署。优点是切换快速，缺点是影响全部用户。
 
-+ 
++ 声明式API：一次能处理多个写操作，并且具备 Merge 能力。
+
+  声明式：想要什么；命令式：一步一步执行什么；越接近现实的表达就叫越“声明式”（declarative），越接近计算机的执行过程就叫越“命令式。
+
++ 1
 
 ### 云类型
 
@@ -204,9 +208,13 @@ Pod 对象的 Status 字段，还可以再细分出一组 Conditions：PodSchedu
 
 #### 健康检查与恢复机制
 
-##### livenessProbe
+Pod 里的容器定义一个健康检查“探针”（Probe）。**注意探针是容器级别的，pod中的每一个容器都需要各自设置探针**，kubelet 就会根据这个 Probe 的返回值决定这个容器的状态，而不是直接以容器镜像是否运行（来自 Docker 返回的信息）作为依据。这种机制，是生产环境中保证应用健康存活的重要手段。
 
-Pod 里的容器定义一个健康检查“探针”（Probe）。kubelet 就会根据这个 Probe 的返回值决定这个容器的状态，而不是直接以容器镜像是否运行（来自 Docker 返回的信息）作为依据。这种机制，是生产环境中保证应用健康存活的重要手段。
+针对运行中的容器，`kubelet` 可以选择是否执行以下三种探针，以及如何针对探测结果作出反应：
+
+- `livenessProbe`：指示容器是否正在运行。如果存活态探测失败，则 kubelet 会杀死容器， 并且容器将根据其[重启策略](https://kubernetes.io/zh/docs/concepts/workloads/pods/pod-lifecycle/#restart-policy)决定未来。如果容器不提供存活探针， 则默认状态为 `Success`。**重建容器**
+- `readinessProbe`：指示容器是否准备好为请求提供服务。如果就绪态探测失败， 端点控制器将从与 Pod 匹配的所有服务的端点列表中删除该 Pod 的 IP 地址。 初始延迟之前的就绪态的状态值默认为 `Failure`。 如果容器不提供就绪态探针，则默认状态为 `Success`。**重启容器**
+- `startupProbe`: 指示容器中的应用是否已经启动。如果提供了启动探针，则所有其他探针都会被 禁用，直到此探针成功为止。如果启动探测失败，`kubelet` 将杀死容器，而容器依其 [重启策略](https://kubernetes.io/zh/docs/concepts/workloads/pods/pod-lifecycle/#restart-policy)进行重启。 如果容器没有提供启动探测，则默认状态为 `Success`。
 
 健康探针可以为 
 
@@ -602,4 +610,464 @@ DaemonSet Controller 会在创建 Pod 的时候，自动在这个 Pod 的 API �
 容忍度（Toleration）是应用于 Pod 上的，允许（但并不要求）Pod 调度到带有与之匹配的污点的节点上。
 
 污点和容忍度（Toleration）相互配合，可以用来避免 Pod 被分配到不合适的节点上。 每个节点上都可以应用一个或多个污点，这表示对于那些不能容忍这些污点的 Pod，是不会被该节点接受的。
+
+
+
+#### Job 与 CronJob
+
+Kuberneters 中两种作业
+
++ LRS（Long Running Service）长期运行的业务，如Deployment
+
++ Batch Jobs  离线业务，按次运行
+
+
+
+##### Job
+
+```
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pi
+spec:
+  template:
+    spec:
+      containers:
+      - name: pi
+        image: resouer/ubuntu-bc 
+        command: ["sh", "-c", "echo 'scale=10000; 4*a(1)' | bc -l "]
+      restartPolicy: Never
+  backoffLimit: 4
+```
+
+注：
+
++ **Job 创建的Pod被自动加上了一个 controller-uid=< 一个随机字符串 > 这样的 Label。而这个 Job 对象本身，则被自动加上了这个 Label 对应的 Selector，从而 保证了 Job 与它所管理的 Pod 之间的匹配关系。**
++ restartPolicy=Never 离线计算的 Pod 永远都不应该被重启，否则它们会再重新计算一遍。
++ 离线作业失败后 Job Controller 就会不断地尝试创建一个新 Pod. backoffLimit 指定了最大尝试次数。
+
+
+
+**Job 并行作业**
+
++ spec.parallelism，它定义的是一个 Job 在任意时间最多可以启动多少个 Pod 同时运行；
+
++ spec.completions，它定义的是 Job 至少要完成的 Pod 数目，即 Job 的最小完成数。
+
+
+
+##### CronJob
+
+```
+
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: hello
+spec:
+  schedule: "*/1 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: hello
+            image: busybox
+            args:
+            - /bin/sh
+            - -c
+            - date; echo Hello from the Kubernetes cluster
+          restartPolicy: OnFailure
+```
+
++ jobTemplate CronJob 是一个 Job 对象的控制器（Controller）
++ schedule cron表达式 【分钟、小时、日、月、星期】
++  spec.concurrencyPolicy， 当任务为执行完，但下一周期到来的控制策略
+  + concurrencyPolicy=Allow，这也是默认情况，这意味着这些 Job 可以同时存在；
+  + concurrencyPolicy=Forbid，这意味着不会创建新的 Pod，该创建周期被跳过；
+  + concurrencyPolicy=Replace，这意味着新产生的 Job 会替换旧的、没有执行完的 Job。
++ 1
+
+CronJob 创建 Job 失败，spec.startingDeadlineSeconds 字段指定时间窗口，在时间窗口内失败次数到达100次，就停止创建
+
+
+
+### RBAC
+
+在 Kubernetes 项目中，负责完成授权（Authorization）工作的机制，就是 RBAC：基于角色的访问控制（Role-Based Access Control）。
+
++ Role：角色，它其实是一组规则，定义了一组对 Kubernetes API 对象的操作权限。
++ Subject：被作用者，既可以是“人”，也可以是“机器”，也可以是你在 Kubernetes 里定义的“用户”。
++ RoleBinding：定义了“被作用者”和“角色”的绑定关系。
+
+
+
+#### Role 与 ClusterRole
+
+namespace 级别，或者是Cluster 级别
+
+```
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: mynamespace
+  name: example-role
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "watch", "list"]
+```
+
+```
+
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: example-clusterrole
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  resourceNames: [""] #指定资源名称
+  verbs: ["get", "watch", "list"]
+```
+
+
+
+#### ServiceAccount
+
+```
+$ kubectl get sa -n mynamespace -o yaml
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    creationTimestamp: 2018-09-08T12:59:17Z
+    name: example-sa
+    namespace: mynamespace
+    resourceVersion: "409327"
+    ...
+  secrets:
+  - name: example-sa-token-vmfg6
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    creationTimestamp: 2018-09-08T12:59:17Z
+    name: example-sa
+    namespace: mynamespace
+    resourceVersion: "409327"
+    ...
+  secrets:
+  - name: example-sa-token-vmfg6
+```
+
+Kubernetes 会为一个 ServiceAccount 自动创建并分配一个 Secret 对象，即：上述 ServiceAcount 定义里最下面的 secrets 字段。这个 Secret，就是这个 ServiceAccount 对应的、用来跟 APIServer 进行交互的授权文件，我们一般称它为：Token。Token 文件的内容一般是证书或者密码，它以一个 Secret 对象的方式保存在 Etcd 当中。
+
+**当pod 引用 ServiceAccount 后，该 ServiceAccount 的 token，也就是一个 Secret 对象，被 Kubernetes 自动挂载到了容器的 /var/run/secrets/kubernetes.io/serviceaccount 目录下。Pod中的容器可以通过此Token访问Kuberneters**
+
+```
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: default-token-l65jl
+      readOnly: true
+```
+
+
+
+## 存储
+
+### PV
+
+持久化存储数据卷。这个 API 对象主要定义的是一个持久化存储在宿主机上的目录，比如一个 NFS 的挂载目录。PV 对象是由运维人员事先创建在 Kubernetes 集群里待用的。(静态调用)
+
+```
+# 如下 创建nfs PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    server: 10.244.1.4
+    path: "/"
+```
+
+**注意：pv 创建出来后，在nfs上已经建立了对应的目录了**
+
+
+
+### PVC
+
+PVC 描述的，则是 Pod 所希望使用的持久化存储的属性。
+
+pvc 与 pv 绑定需要满足两点
+
++ PV 和 PVC 的 spec 字段, storage 大小要满足
++ PV 和 PVC 的 storageClassName 字段必须一样 
+
+```
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: manual
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+
+
+pod 启动时，使用pvc 创建 `持久化` Volume,即宿主机持久化目录。
+
+当一个pod一个 Pod 调度到一个节点上之后，kubelet 就要负责为这个 Pod 创建它的 Volume 目录。默认情况下，kubelet 为 Volume 创建的目录是如下所示的一个宿主机上的路径：
+
+```
+/var/lib/kubelet/pods/<Pod的ID>/volumes/kubernetes.io~<Volume类型>/<Volume名字>
+```
+
+**kubelet 需要作为 client，将远端 NFS 服务器的目录（比如：“/”目录），挂载到 Volume 的宿主机目录上，即相当于执行如下所示的命令：**
+
+```
+$ mount -t nfs <NFS服务器地址>:/ /var/lib/kubelet/pods/<Pod的ID>/volumes/kubernetes.io~<Volume类型>/<Volume名字> 
+```
+
+通过这个挂载操作，Volume 的宿主机目录就成为了一个远程 NFS 目录的挂载点，后面你在这个目录里写入的所有文件，都会被保存在远程 NFS 服务器上。所以，我们也就完成了对这个 Volume 宿主机目录的“持久化”。对应地，在删除一个 PV 的时候，Kubernetes 也需要 Unmount。
+
+
+
+### StorageClass
+
+Kubernwters 自动创建 PV 的机制，即：Dynamic Provisioning。而 StorageClass 对象的作用，其实就是创建 PV 的模板。
+
++ PV 的属性。比如，存储类型、Volume 的大小等等
++ 创建这种 PV 需要用到的存储插件。比如，NFS, NAS, Ceph 等等。
+
+用户创建一个PVC找到对应的StorageClass （ PVC 里指定要使用的 StorageClass 名字）,   Kubernetes 就会调用该 StorageClass 声明的存储插件，创建出需要的 PV。
+
+```
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: storageclass-default
+provisioner: nfs-provisioner
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+```
+
+nfs-provisioner : nfs的控制器，可以连接NFS服务器，并创建nfs远程目录
+
+**需要注意的是，StorageClass 并不是专门为了 Dynamic Provisioning 而设计的。**
+
+![image-20220211161632819](深入剖析 Kubernetes.assets/image-20220211161632819.png)
+
++ PVC 描述的，是 Pod 想要使用的持久化存储的属性，比如存储的大小、读写权限等。
++ PV 描述的，则是一个具体的 Volume 的属性，比如 Volume 的类型、挂载目录、远程存储服务器地址等。
++ StorageClass 的作用，则是充当 PV 的模板。并且，只有同属于一个 StorageClass 的 PV 和 PVC，才可以绑定在一起。StorageClass 的另一个重要作用，是指定 PV 的 Provisioner（存储插件）。
+
+
+
+## 容器网络
+
+### 网络栈
+
+容器能看见的“网络栈”，实际上是被隔离在它自己的 Network Namespace 当中的。网络栈”，就包括了：网卡（Network Interface）、回环设备（Loopback Device）、路由表（Routing Table）和 iptables 规则。对于一个进程来说，这些要素，其实就构成了它发起和响应网络请求的基本环境。
+
+**容器不开启network namespace 实际可以直接使用宿主机的网络栈（–net=host）**
+
+
+
+#### 容器独立网络栈
+
+在 Linux 中，能够起到虚拟交换机作用的网络设备，是网桥（Bridge）。它是一个工作在数据链路层（Data Link）的设备，主要功能是根据 MAC 地址学习来将数据包转发到网桥的不同端口（Port）上。
+
+##### Docker 
+
+Docker 项目会默认在宿主机上创建一个名叫 docker0 的网桥，凡是连接在 docker0 网桥上的容器，就可以通过它来进行通信。通过**创建 Veth Pair 设备**， Veth Pair 以两张虚拟网卡（Veth Peer）的形式成对出现的。并且，从其中一个“网卡”发出的数据包，可以直接出现在与它对应的另一张“网卡”上，哪怕这两个“网卡”在不同的 Network Namespace 里。
+
+docker0 扮演二层交换机的角色，当容器veth0网卡发送ARP请求，会直接发送到docker0网桥上，docker0 把 ARP 广播转发到其他被“插”在 docker0 上的虚拟网卡上。这样，同样连接在 docker0 上的目标容器的网络协议栈就会收到这个 ARP 请求，从而将所对应的 MAC 地址回复给请求容器。
+
+![image-20220228113127288](深入剖析 Kubernetes.assets/image-20220228113127288.png)
+
+注： 在 Docker 的默认配置下，不同宿主机上的容器通过 IP 地址进行互相访问是根本做不到的。
+
+
+
+#### 容器跨主机网络
+
+##### UDP模式（已弃用）
+
+![image-20220228115317806](深入剖析 Kubernetes.assets/image-20220228115317806.png)
+
+Flannel UDP 模式提供的其实是一个三层的 Overlay 网络，
+
+通过Flannel 的 flannel0设备首先对发出端的 IP 包进行 UDP 封装，目的地址为Node2 IP，源地址为 Node1 IP,端口为 flnanel0 设备监控端口。然后在Node2 的 Flannel0 为接收端进行解封装拿到原始的 IP 包，进而把这个 IP 包转发给目标容器。
+
+Flannel 在不同宿主机上的两个容器之间打通了一条“隧道”，使得这两个容器可以直接使用 IP 地址进行通信，而无需关心容器和宿主机的分布情况。
+
+
+
+##### VXLAN 模式
+
+VXLAN，即 Virtual Extensible LAN（虚拟可扩展局域网），是 Linux 内核本身就支持的一种网络虚似化技术。所以说，VXLAN 可以完全在内核态实现上述封装和解封装的工作，从而通过与前面相似的“隧道”机制，构建出覆盖网络（Overlay Network）。
+
+**注：与 Flannel UDP的区别，是将核心装换逻辑放入到内核态进行处理**
+
+VXLAN 的覆盖网络的设计思想是：在现有的三层网络之上，“覆盖”一层虚拟的、由**内核 VXLAN 模块负责维护的二层网络（Mac地址层）**，使得连接在这个 VXLAN 二层网络上的“主机”（虚拟机或者容器都可以）之间，可以像在同一个局域网（LAN）里那样自由通信。
+
+![image-20220228120109216](深入剖析 Kubernetes.assets/image-20220228120109216.png)
+
+每台宿主机上名叫 flannel.1 的设备，就是 VXLAN 所需的 VTEP 设备，它既有 IP 地址，也有 MAC 地址。VTEP设备即为隧道的出入口。 
+
+VTEP 设备之间，就需要想办法组成一个虚拟的二层网络，即：通过二层数据帧进行通信。
+
++ 当node 加入flannel设备时，node上会加入各个flannel网段对应node ip 的路由信息
++ 通过 ARP 消息根据 “目的 VTEP 设备”的 IP 地址， 获取mac地址
+
+Linux 内核二层封包，添加步骤如下
+
++ 目的 VTEP 设备”的 MAC 地址、组建 VTEP设备 二层网络，但不可实际联通。称为 ‘内部数据帧’
++ 把“内部数据帧”进一步封装成为宿主机网络里的一个普通的数据帧，好让它“载着”“内部数据帧”，通过宿主机的 eth0 网卡进行传输。
++ Linux 内核会把这个数据帧封装进一个 UDP 包里发出去，flanneld 进程负责维护 mac地址 - 宿主机IP（目的地址）
+
+![](深入剖析 Kubernetes.assets/vxlan封装.webp.jpg)
+
+
+
+VXLAN 模式组建的覆盖网络，其实就是一个由不同宿主机上的 VTEP 设备，也就是 flannel.1 设备组成的虚拟二层网络。对于 VTEP 设备来说，它发出的“内部数据帧”就仿佛是一直在这个**虚拟的二层网络上流动**。这，也正是覆盖网络的含义。
+
+
+
+### Kuberneters 网络模型 与 网络插件
+
+
+
+kuberneters 中的网络模型与 Flannel 项目一致，其使用的是 cni0 网桥，维护了一个单独的网桥来代替 docker0。
+
+![image-20220228145136234](深入剖析 Kubernetes.assets/image-20220228145136234.png)
+
+#### 网络插件
+
+CNI 的设计思想，就是：Kubernetes 在启动 Infra 容器之后，就可以直接调用 CNI 网络插件，为这个 Infra 容器的 Network Namespace，配置符合预期的网络栈。cni 插件需配置 pod 的网络栈
+
+通过实现 CRI（Container Runtime Interface，容器运行时接口）来完成对CNI的配置。对于 Docker 项目来说，它的 CRI 实现叫作 dockershim，你可以在 kubelet 的代码里找到它。
+
+实现网络方案对应的CNI插件，即配置Infra容器的网络栈，并连到网桥上。整体流程是：
+
++ kubelet创建Pod
+
++ 创建Infra容器
++ 调用SetUpPod（）方法，该方法需要为CNI准备参数，然后调用CNI插件（flannel)为Infra配置网络；其中参数来源于1、dockershim设置的一组CNI环境变量；2、dockershim从CNI配置文件里（有flanneld启动后生成，类型为configmap）加载到的、默认插件的配置信息（network configuration)，这里对CNI插件的调用，实际是network configuration进行补充。参数准备好后，调用Flannel CNI
++ 调用CNI bridge（所需参数即为上面：设置的CNI环境变量和补充的network configuation）来执行具体的操作流程。
+
+
+
+#### Kuberneters 网络模型
+
++ 所有容器都可以直接使用 IP 地址与其他容器通信，而无需使用 NAT。
++ 所有宿主机都可以直接使用 IP 地址与所有容器通信，而无需使用 NAT。反之亦然。
++ 容器自己“看到”的自己的 IP 地址，和别人（宿主机或者容器）看到的地址是完全一样的。
+
+
+
+### Kuberneters 三层网络模型 - Calico
+
+**纯三层的网络协议，即IP层，通过IP路由互通。**
+
+#### Calico
+
+Calico 项目提供的网络解决方案： **会在每台宿主机上，添加一个格式如下所示的路由规则**
+
+```
+
+<目的容器IP地址段> via <网关的IP地址> dev eth0
+```
+
+网关的 IP 地址，正是目的容器所在宿主机的 IP 地址。
+
+**Calico 使用 BGP 来自动地在整个集群中分发路由信息**。BGP 的全称是 Border Gateway Protocol，即：边界网关协议。它是一个 Linux 内核原生就支持的、专门用在大规模数据中心里维护不同的“自治系统”之间路由信息的、无中心的路由协议。
+
+通过BGP协议自动维护整个集群系统内的各个node上的路由表，pod的ip是实时变换的。可以认为，在每个边界网关上都会运行着一个小程序，它们会将各自的路由表信息，通过 TCP 传输给其他的边界网关。而其他边界网关上的这个小程序，则会对收到的这些数据进行分析，然后将需要的信息添加到自己的路由表里。
+
+**BGP，就是在大规模网络中实现节点路由信息共享的一种协议。**	
+
+Calico 组成
+
++ Calico 的 CNI 插件。这是 Calico 与 Kubernetes 对接的部分。我已经在上一篇文章中，和你详细分享了 CNI 插件的工作原理，这里就不再赘述了。
++ Felix。它是一个 DaemonSet，负责在宿主机上插入路由规则（即：写入 Linux 内核的 FIB 转发信息库），以及维护 Calico 所需的网络设备等工作。
++ BIRD。它就是 BGP 的客户端，专门负责在集群里分发路由规则信息。主动读取felix在host上设置的路由信息，然后通过BGP协议广播出去
+
+![](深入剖析 Kubernetes.assets/calico.jpg)
+
+
+
+Calico 的 CNI 插件会为每个容器设置一个 Veth Pair 设备，然后把其中的一端放置在宿主机上（它的名字以 cali 前缀开头）。由于 Calico 没有使用 CNI 的网桥模式，Calico 的 CNI 插件还需要在宿主机上为每个容器的 Veth Pair 设备配置一条路由规则，用于接收传入的 IP 包。
+
+```
+# 发往 10.233.2.3 的 IP 包，应该进入 cali5863f3 设备。
+10.233.2.3 dev cali5863f3 scope link
+```
+
+容器发出的 IP 包就会经过 Veth Pair 设备出现在宿主机上。然后，宿主机网络栈就会根据路由规则的下一跳 IP 地址。这里最核心的“下一跳”路由规则，就是由 Calico 的 Felix 进程负责维护的。这些路由规则信息，则是通过 BGP Client 也就是 BIRD 组件，使用 BGP 协议传输而来的。BGP消息理解如下（非实际）：
+
+```
+[BGP消息]
+我是宿主机192.168.1.3
+10.233.2.0/24网段的容器都在我这里
+这些容器的下一跳地址是我
+```
+
+Calico 维护的网络在默认配置下，是一个被称为“Node-to-Node Mesh”的模式。每台宿主机上的 BGP Client 都需要跟其他所有节点的 BGP Client 进行通信以便交换路由信息。这种规模在节点100以下。
+
+
+
+#### IPIP模式
+
+上述的模型是集群宿主机之间是二层连通的、若节点之间不连通需要开通 IPIP 模式。
+
+有两台处于不同子网的宿主机 Node 1 和 Node 2，对应的 IP 地址分别是 192.168.1.2 和 192.168.2.2。这两台机器通过路由器实现了三层转发，所以这两个 IP 地址之间是可以相互通信的。
+
+![](深入剖析 Kubernetes.assets/calico_ipip.jpg)
+
+当Clico 添加规则
+
+```
+10.233.2.0/16 via 192.168.2.2 eth0
+```
+
+上面这条规则里的下一跳地址是 192.168.2.2，可是它对应的 Node 2 跟 Node 1 却根本不在一个子网里，没办法通过二层网络把 IP 包发送到下一跳地址。
+
+网络中处于同一个子网内的主机才能直接互通，不同子网之间是不能直接通信的（但可通过路由器或网关进行）。注意：如10.233.1.2 直接到路由器（192.168.1.x）路由器不认该网段，会直接丢弃。
+
+在 Calico 的 IPIP 模式下，Felix 进程在 Node 1 上添加的路由规则，会稍微不同，如下所示：
+
+```
+10.233.2.0/24 via 192.168.2.2 tunl0
+```
+
+尽管这条规则的下一跳地址仍然是 Node 2 的 IP 地址，但这一次，要负责将 IP 包发出去的设备，变成了 tunl0。Calico 使用的这个 tunl0 设备，是一个 IP 隧道（IP tunnel）设备。IP 包进入 IP 隧道设备之后，就会被 Linux 内核的 IPIP 驱动接管。IPIP 驱动会将这个 IP 包直接封装在一个宿主机网络的 IP 包中：
+
+![](深入剖析 Kubernetes.assets/ipip.jpg)
+
+原先从容器到 Node 2 的 IP 包，就被伪装成了一个从 Node 1 到 Node 2 的 IP 包。由于宿主机之间已经使用路由器配置了三层转发，也就是设置了宿主机之间的“下一跳”。所以这个 IP 包在离开 Node 1 之后，就可以经过路由器，最终“跳”到 Node 2 上。
+
+**注：  Calico 项目能够让宿主机之间的路由设备（也就是网关），也通过 BGP 协议“学习”。即可通过2次跳转到达目的Container.**
+
+
+
+
+
+
+
+
+
+
 
