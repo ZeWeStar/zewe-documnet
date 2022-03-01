@@ -1063,11 +1063,55 @@ Calico 维护的网络在默认配置下，是一个被称为“Node-to-Node Mes
 
 
 
+### Service
+
+#### iptables
+
+Kubernetes 之所以需要 Service，一方面是因为 Pod 的 IP 不是固定的，另一方面则是因为一组 Pod 实例之间总会有负载均衡的需求。有如下类型
+
++ ClusterIP
+
+  通过集群的内部 IP 暴露服务，选择该值时服务只能够在集群内部访问。**默认**；通过访问该Cluster:port 负载一个选中的pod
+
+  **Headless Service**
+
+  当ClusterIp设置为 None 时，为Headless Service, 访问ServiceName时会直接返回所有满足的pod地址供选择。若pod开启了hostname,则访问 hostname.servicename.namespace 可指定pod访问。
+
++ NodePort
+
+  通过每个节点上的 IP 和静态端口（`NodePort`）暴露服务。 `NodePort` 服务会路由到自动创建的 `ClusterIP` 服务。 通过请求 `<节点 IP>:<节点端口>`，你可以从集群的外部访问一个 `Service-NodePort` 服务。
+
++ LoadBalancer
+
+  使用云提供商的负载均衡器向外部暴露服务。 外部负载均衡器可以将流量路由到自动创建的 `NodePort` 服务和 `ClusterIP` 服务上。
+
++ ExternalName
+
+  通过Service 映射外部的域名，集群内pod可通过该Service 访问外部服务, 注:若想使用 service名称域名的形式，集群需要有DNS组件，如 core dns
+
++ 1
 
 
 
+Service 是由 kube-proxy 组件，加上 iptables 来共同实现的。**注意 Service ClusterIp 只是一条 iptables 规则上的配置，并没有真正的网络设备，所以你 ping 这个地址，是不会有任何响应的。**
+
+kube-proxy  感知 到 Service 对象创建，会在宿主机上创建这样一条 iptables 规则，凡是访问 该设定的clusterIp（如：10.0.1.175）则需要转到  KUBE-SVC-xxxxxx 的 iptables 链进行处理。实际上是**一组随机**模式（–mode random）的 iptables 链。为Service代理的几个pod的 DNAT 规则；所以此处实现了负载均衡，也通过DNAT转换到真正的pod地址。
 
 
+
+#### IPVS
+
+当pod过多时，会生产大量的iptables 规则，IPVS 模式的工作原理，其实跟 iptables 模式类似。当我们创建 Service后，kube-proxy 首先会在宿主机上创建一个虚拟网卡（叫作：kube-ipvs0），并为它分配 Service VIP 作为 IP 地址，kube-proxy 就会通过 Linux 的 IPVS 模块，为这个 IP 地址设置 IPVS 虚拟主机（多个pod），并设置这三个虚拟主机之间使用轮询模式 (rr) 来作为负载均衡策略。IPVS 虚拟主机的 IP 地址和端口，对应的正是被代理的 Pod。
+
+
+
+### Ingress
+
+这种全局的、为了代理不同后端 Service 而设置的负载均衡服务，就是 Kubernetes 里的 Ingress 服务。所谓 Ingress，就是 Service 的“Service”。 通过设置域名+path 负载均衡 对应的 Service
+
+Ingress 实际为一种反向代理的对象，需要一个控制器如：Nginx-Ingress。 域名指向控制器，一般控制器为host模型，写任意一个node ip 即可
+
+创建一个Ingress，就是 控制器上配置一个负载均衡 到 Service.
 
 
 
