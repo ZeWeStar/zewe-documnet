@@ -603,3 +603,30 @@ DaemonSet Controller 会在创建 Pod 的时候，自动在这个 Pod 的 API �
 
 污点和容忍度（Toleration）相互配合，可以用来避免 Pod 被分配到不合适的节点上。 每个节点上都可以应用一个或多个污点，这表示对于那些不能容忍这些污点的 Pod，是不会被该节点接受的。
 
+
+
+#### Job 与 CronJob
+
+长期运行的业务  LRS（Long Running Service）和 离线业务 Batch Jobs 两种作业形态，对它们进行“分别管理”和“混合调度”。
+
+##### Job
+
+```
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pi
+spec:
+  template:
+    spec:
+      containers:
+      - name: pi
+        image: resouer/ubuntu-bc 
+        command: ["sh", "-c", "echo 'scale=10000; 4*a(1)' | bc -l "]
+      restartPolicy: Never
+  backoffLimit: 4
+```
+
+Pod 模板中定义 restartPolicy=Never 的原因：离线计算的 Pod 永远都不应该被重启，否则它们会再重新计算一遍。定义了 restartPolicy=Never，那么离线作业失败后 Job Controller 就会不断地尝试创建一个新 Pod。
+
+通过 backoffLimit 字段限制 
