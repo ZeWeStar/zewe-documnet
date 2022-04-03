@@ -719,6 +719,26 @@ GET /_search?size=5&from=10
 
 + 查询 一个“评分”的查询
 
+```
+POST / book / _search {
+	"query": {
+		"bool": {
+			"must": {
+				"match_all": {}
+			},
+			"filter": {
+				"range": {
+					"price": {
+						"gte": 200,
+						"lte": 1000
+					}
+				}
+			}
+		}
+	}
+}
+```
+
 
 
 #### 批量操作
@@ -1202,6 +1222,51 @@ GET /lagou-property/_search
 }
 }
 
+```
+
+### 
+
+## Java Client
+
++ 单独引用
+
+```
+        <dependency>
+            <groupId>io.searchbox</groupId>
+            <artifactId>jest</artifactId>
+            <version>6.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.elasticsearch</groupId>
+            <artifactId>elasticsearch</artifactId>
+        </dependency>
+```
+
+```
+//初始化工厂类
+         JestClientFactory jestClientFactory = new JestClientFactory();
+          HttpClientConfig httpClientConfig = null;
+          if(StringUtils.isNotBlank(username) && StringUtils.isNotBlank(password)){
+              httpClientConfig = new HttpClientConfig.Builder(serverUris).defaultCredentials(username, password).readTimeout(10000).multiThreaded(true).build();
+          }else{
+              httpClientConfig = new HttpClientConfig.Builder(serverUris).readTimeout(10000).multiThreaded(true).build();
+          }
+         jestClientFactory.setHttpClientConfig(httpClientConfig);
+         //获取客户端
+         return  jestClientFactory.getObject();
+```
+
++ SpringBoot 引用 RestClient
+
+```
+public RestHighLevelClient client() {
+        Assert.requireNonEmpty(this.hosts, "无效的es连接");
+        return new RestHighLevelClient(
+                RestClient.builder(this.hosts).build()
+        );
+    }
+    
+    
 ```
 
 
