@@ -1101,7 +1101,8 @@ export ETCDCTL_API=3 && etcdctl --cacert=/etc/kubernetes/ssl/ca.pem  --cert=/etc
 ```
 
 ```
-
+# 删除
+export ETCDCTL_API=3 && etcdctl --cacert=/etc/kubernetes/ssl/ca.pem  --cert=/etc/kubernetes/ssl/kubernetes.pem  --key=/etc/kubernetes/ssl/kubernetes-key.pem  --endpoints=https://172.16.5.43:2379 del /cn/com/bobfintech/cce/dockerRegistrySecret
 ```
 
 
