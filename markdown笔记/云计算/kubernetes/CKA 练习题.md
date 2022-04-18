@@ -24,20 +24,20 @@ ServiceAccount cicd-token。
 
 ```
 # 创建namespace
-kubectl create namespace app-team1
+kubectl create ns app-team1
 
 # 创建 ClusterRole
-kubectl create clusterrole deployment-clusterrole --verb=create --resource=deployment,statefulset,daemonset
+kubectl create clusterrole deployment-role --verb=create --resource=Deployment,StatefulSet,DaemonSet
 
 # 创建 ServiceAccount
 kubectl create serviceaccount cicd-token -n app-team1
 
-# 创建 binding
+# 创建 rolebinding
 # 注意 serviceaccount must be <namespace>:<name>
-kubectl create rolebinding  cicd-token-binding --serviceaccount=app-team1:cicd-token --clusterrole=deployment-clusterrole -n app-team1
+kubectl create rolebinding deployment-role-cicd-token-bind --clusterrole=deployment-role --serviceaccount=cicd-token -n app-team1
 
 # 查看 binding
-kubectl describe rolebinding cicd-token-binding -n app-team1
+kubectl describe rolebinding deployment-role-cicd-token-bind -n app-team1
 ```
 
 
