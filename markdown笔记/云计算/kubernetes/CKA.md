@@ -170,3 +170,246 @@ kubectl describe networkpolicy all-port-from-namespace -n fubar
 
 重新配置一个已经存在的deployment front-end，在名字为nginx的容器里面添加一个端口配置，名字为http，暴露端口号为80，然后创建一个service，名字为front-end-svc，暴露该deployment的http端口，并且service的类型为NodePort。
 
+```
+# deploy container 暴露端点
+kubectl edit deploy front-end -n default
+
+#添加ports字段
+    spec:
+      containers:
+      - name: my-nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+          
+# 创建svc
+kubectl expose deployment front-end --port=80 --target-port=80 --type=NodePort --name=front-end-svc
+```
+
+
+
+## 07-创建Ingress
+
+在ing-internal命名空间下创建一个ingress，名字为ping，代理的service hello，端口为5678，配置路径/hello。
+验证：访问curl -kL <INTERNAL_IP>/hi会返回hi
+
+```
+# yaml
+vim 07-ingress.yaml
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ping
+  namespace: ing-internal
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /hello
+        pathType: Prefix
+        backend:
+          service:
+            name: hello
+            port:
+              number: 5678
+
+# 执行
+kubectl apply -f 07-ingress.yaml
+```
+
+
+
+## 08-扩展 deployment副本数
+
+扩容名字为guestbook的deployment的副本数为6
+
+```
+# 扩展
+kubectl scale deployment guestbook --replicas=6
+
+# 查看
+kubectl get deploy guestbook -n default
+```
+
+
+
+## 09-将 pod 部署到指定 node 节点上
+
+创建一个Pod，名字为nginx-kusc00401，镜像地址是nginx，调度到具有disk=spinning标签的节点上
+
+```
+# 节点设置标签（已有标签不用设置）
+kubectl label nodes ek8s-node-1 disk=spinning
+
+# 查看标签
+kubectl get node --show-labels
+
+# 创建 09-pod.yaml
+vim 09-pod.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-kusc00401
+  namespace: default
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    imagePullPolicy: IfNotPresent
+  nodeSelector:
+    disk: spinning
+    
+
+# 执行
+kubectl apply -f 09-pod.yaml
+
+```
+
+
+
+## 10-检查有多少 node 节点是健康状态
+
+检查集群中有多少节点为Ready状态，并且去除包含NoSchedule污点的节点。之后将数字写到/opt/KUSC00402/kusc00402.txt
+
+```
+#查看node状态，计算ready的node数
+kubectl get nodes | grep ready
+
+#查看有污点的node数
+kubectl  describe node | grep Taint | grep NoSchedule
+
+#两数相减记入指定文件
+echo n >> /opt/KUSC00402/kusc00402.txt
+```
+
+
+
+## 11-创建包含多个 container 的 Pod
+
+创建一个Pod，名字为kucc1，这个Pod可能包含1-4容器，该题为四个：nginx+redis+memcached+consul
+
+```
+# vim 10-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kucc1
+  namespace: default
+spec:
+  containers:
+  - name: nginx
+    image: nignx
+  - name: redis
+    image: redis
+  - name: memcached
+    image: memcached
+  - name: consul
+    image: consul
+  
+# 执行
+kubectl apply -f 10-pod.yaml
+
+#检查pod状态
+kubectl get pod kucc1 -o wide
+```
+
+
+
+## 12-创建PV
+
+创建一个pv，名字为app-config，大小为2Gi，访问权限为ReadWriteMany。Volume的类型为hostPath，路径为/srv/app-config
+
+```
+# vim 12-pv.yaml
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: app-config
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteMany
+  hostPath:
+    path: "/srv/app-config"
+    
+# 执行
+kubectl apply -f 12-pv.yaml
+
+# 检查
+kubectl describe pv app-config 
+```
+
+
+
+## 13-创建 PVC并挂载
+
+创建一个名字为pv-volume的pvc，指定storageClass为csi-hostpath-sc，大小为10Mi
+然后创建一个Pod，名字为web-server，镜像为nginx，并且挂载该PVC至/usr/share/nginx/html，挂载的权限为ReadWriteOnce。之后通过kubectl edit或者kubectl path将pvc改成70Mi，并且记录修改记录。
+
+```
+# vim 13-pvc.yaml
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pv-volume
+spec:
+  storageClassName: csi-hostpath-sc
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Mi
+
+# 执行
+kubectl apply -f 13-pvc.yaml
+
+
+# vim 13-pod.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-server
+spec:
+  volumes:
+    - name: pv-volume
+      persistentVolumeClaim:
+        claimName: pv-volume
+  containers:
+    - name: task-pv-container
+      image: nginx
+      ports:
+        - containerPort: 80
+          name: "http-server"
+      volumeMounts:
+        - mountPath: "/usr/share/nginx/html"
+          name: pv-volume
+
+# 执行 
+kubectl apply -f 13-pod.yaml
+
+# 扩容 注意记录
+kubectl edit pvc pv-volume --record ##此处一定注意别丢了记录
+
+
+```
+
+
+
+## 14-监控 pod 的日志筛选指定错误到文件
+
+查看日志并筛选到指定文件
+
+```
+ kubectl logs foobar |grep unable-to-access-website > /opt/KUTR00101/foobar
+```
+
