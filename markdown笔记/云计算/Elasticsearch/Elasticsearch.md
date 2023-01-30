@@ -1319,7 +1319,7 @@ curl -X GET "localhost:9200/_cluster/health?pretty"
 
 
 
-### 索引
+## 索引
 
 索引实际上是指向一个或者多个物理 *分片* 的 *逻辑命名空间* 。一个 *分片* 是一个底层的 *工作单元* ，它仅保存了全部数据中的一部分。
 
@@ -1521,6 +1521,139 @@ _source 里面提取出来的。当然你也可以独立的存储某个字段，
 
 **4、analyzer：指定分词器**
 一般我们处理中文会选择ik分词器 ik_max_word ik_smart 
+
+
+
+### 索引重建
+
+es 中mapping 建立成功后，只支持添加新字段，已有字段不支持修改（类型，定义）；若需要修改旧字段则必须采用重建索引操作
+
+**1、mapping 添加新字段**
+
+```
+#直接添加即可
+PUT index/_mapping
+{
+    "properties":{
+       "new_field":{"type" : "keyword"}
+    }
+}
+```
+
+**2、重建索引**
+
++ 目标索引起别名，程序使用别名访问
+
+  ```
+  # 第一步
+  POST /_aliases
+  {
+    "actions": [
+      {
+        "add": {
+          "index": "index-old",
+          "alias": "index-alias"
+        }
+      }
+    ]
+  }
+  ```
+
++ 建新索引，设定mapping
+
+  ```
+  PUT /index-new
+  {
+    "settings" : {
+         # 分片数
+        "number_of_shards" : 4,
+         # 副本数
+        "number_of_replicas" : 1
+     },
+      "mappings" : {
+        "origin" : {
+          "properties" : {
+           "name" : {
+              "type" : "keyword"
+            },
+            "text" : {
+              "type" : "text",
+              "analyzer" : "ik_smart"
+            },
+            "age" : {
+              "type" : "integer"
+            },
+            "number" : {
+              "type" : "long"
+            }
+          }
+        }
+      }
+  }
+  ```
+
++ 使用 _reindex 重建索引
+
+  注意： 如果不手动创建新索引的mapping信息，那么Elasticsearch将启动自动映射模板对数 据进行类型映射，可能不是期望的类型，这点要注意一下。
+
+  ```
+  POST /_reindex
+  {
+  	"source": {
+  		"index": "index-old"
+  	},
+  	"dest": {
+  		"index": "index-new",
+  		#"version_type": "internal",
+  		#"op_type": "create"
+  	}
+  }
+  ```
+
+  version_type属性
+
+  含义如下： internal：直接拷贝文档到目标索引，对相同的type、文档ID直接进行覆盖，默认值 external：迁移文档到目标索引时，保留version信息，对目标索引中不存在的文档进行创建，已 存在的文档按version进行更新，遵循乐观锁机制。
+
+  op_type属性
+
+  设置为create，那么迁移时只在目标索引中创建ID不存在的文档，已存在的文档，会提示 错误
+
++ 查看重建进度
+
+  ```
+  GET _tasks?detailed=true&actions=*reindex&human
+  ```
+
++ 新索引添加别名，旧索引去除别名
+
+  ```
+  POST /_aliases
+  {
+  	"actions": [{
+  			"add": {
+  				"index": "index-new",
+  				"alias": "index-alias"
+  			}
+  		},
+  		{
+  			"remove": {
+  				"index": "index-old",
+  				"alias": "index-alias"
+  			}
+  		}
+  	]
+  }
+  ```
+
+  
+
++ 删除旧索引
+
+  ```
+  DELETE /index-old
+  ```
+
+  
 
 
 
