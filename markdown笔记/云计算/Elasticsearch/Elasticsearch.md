@@ -1271,11 +1271,65 @@ public RestHighLevelClient client() {
 
 
 
-## 集群
+## 分布式架构
 
-一个运行中的 Elasticsearch 实例称为一个节点，而集群是由一个或者多个拥有相同 `cluster.name` 配置的节点组成， 它们共同承担数据和负载的压力。当有节点加入集群中或者从集群中移除节点时，集群将会重新平均分布所有的数据。
+### 集群
 
-当一个节点被选举成为 *主* 节点时， 它将负责管理集群范围内的所有变更，例如增加、删除索引，或者增加、删除节点等。 而主节点并不需要涉及到文档级别的变更和搜索等操作，所以当集群只拥有一个主节点的情况下，即使流量的增加它也不会成为瓶颈。 任何节点都可以成为主节点。我们的示例集群就只有一个节点，所以它同时也成为了主节点。
+#### **集群**
+
+一个运行中的 Elasticsearch 实例称为一个节点（一台机器上可多个实例），而集群是由一个或者多个拥有相同 `cluster.name` 配置的节点组成， 它们共同承担数据和负载的压力。当有节点加入集群中或者从集群中移除节点时，集群将会重新平均分布所有的数据。
+
+#### **节点**
+
+一个Elasticsearch实例即一个Node；Elasticsearch的配置文件中可以通过node.master、node.data来设 置节点类型。
+
+```
+node.master=true #可竞选主节点
+node.data=true #存储数据
+# 都为false时，为协调节点，主要负载压力
+```
+
+**当一个节点被选举成为 *主* 节点时， 它将负责管理集群范围内的所有变更，例如增加、删除索引，或者增加、删除节点等。 而主节点并不需要涉及到文档级别的变更和搜索等操作；**
+
+#### **分片**
+
+每个索引有1个或多个分片，每个分片存储不同的数据。分片可分为主分片（primary shard）和复制分片（replica shard），复制分片是主分片的拷贝。默认每个主分片有一个复 制分片，每个索引的复制分片的数量可以动态地调整，复制分片从不与它的主分片在同一个 节点上
+
+**复制分片**
+
+提高恢复能力：当主分片挂掉时，某个复制分片可以变成主分片； 提高性能：get 和 search 请求既可以由主分片又可以由复制分片处理
+
+![img](Elasticsearch.assets/3f7b46a75fb74414a7250183a069a3a3.png)
+
++ Gateway是ES用来存储索引的文件系统，支持多种类型。包括本地文件系统(默认)，HDFS，S3等。gateway模块主要负责集群元信息的存储和集群重启时的恢复。
+
++ Distributed Lucene Directory是一个分布式的lucene框架
+
++ Lucene之上是ES的模块，包括：索引模块、搜索模块、映射解析模块等；Index Module（创建Index模块）、Search Module（搜索模块）、Mapping（映射）、River 代表 es的一个数据源（运行在Elasticsearch集群内部的一个插件，主要用来从外部获取获取异构数据，然后 在Elasticsearch里创建索引；常见的插件有RabbitMQ River、Twitter River）。
+
++  Elasticsearch发现机制、脚本
+
+  Discovery 是Elasticsearch自动发现节点的机制的模块，Zen Discovery和 EC2 discovery。EC2：亚 马逊弹性计算云 EC2 discovery主要在亚马云平台中使用。Zen Discovery作用就相当于solrcloud中的 zookeeper。zen Discovery 从功能上可以分为两部分，第一部分是集群刚启动时的选主，或者是新加 入集群的节点发现当前集群的Master。第二部分是选主完成后，Master 和 Folower 的相互探活。  
+
+  Scripting 是脚本执行功能，有这个功能能很方便对查询出来的数据进行加工处理。 
+
+  3rd Plugins 表示Elasticsearch支持安装很多第三方的插件，例如elasticsearch-ik分词插件、 elasticsearch-sql sql插件。
+
++ Es 交互方式
+
+  有Thrift、Memcached、Http三种协议，默认的是用Http协议传输
+
++ Elasticsearch的API支持模式
+
+  RESTFul Style API风格的API接口标准是当下十分流行的。Elasticsearch作为分布式集群，客户端到 服务端，节点与节点间通信有TCP和Http通信协议，底层实现为Netty框架
+
++ 
+
+
+
+https://laowan.blog.csdn.net/article/details/122434351?spm=1001.2101.3001.6661.1&utm_medium=distribute.pc_relevant_t0.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1-122434351-blog-126558237.pc_relevant_multi_platform_whitelistv4&depth_1-utm_source=distribute.pc_relevant_t0.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1-122434351-blog-126558237.pc_relevant_multi_platform_whitelistv4&utm_relevant_index=1
+
+
 
 ### 集群健康
 
